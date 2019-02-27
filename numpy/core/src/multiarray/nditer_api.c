@@ -13,9 +13,11 @@
 
 /* Indicate that this .c file is allowed to include the header */
 #define NPY_ITERATOR_IMPLEMENTATION_CODE
+#include "aligned_alloc.h"
 #include "nditer_impl.h"
 #include "templ_common.h"
 #include "ctors.h"
+#include "mkl_cpy.h"
 
 /* Internal helper functions private to this file */
 static npy_intp

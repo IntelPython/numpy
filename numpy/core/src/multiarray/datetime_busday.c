@@ -22,6 +22,7 @@
 #include "_datetime.h"
 #include "datetime_busday.h"
 #include "datetime_busdaycal.h"
+#include "mkl_cpy.h"
 
 /* Gets the day of the week for a datetime64[D] value */
 static int

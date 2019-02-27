@@ -23,6 +23,7 @@ maintainer email:  oliphant.travis@ieee.org
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include "structmember.h"
+#include "aligned_alloc.h"
 
 /*#include <stdio.h>*/
 #define NPY_NO_DEPRECATED_API NPY_API_VERSION
@@ -53,6 +54,7 @@ maintainer email:  oliphant.travis@ieee.org
 #include "alloc.h"
 #include "mem_overlap.h"
 #include "numpyos.h"
+#include "mkl_cpy.h"
 #include "strfuncs.h"
 
 #include "binop_override.h"

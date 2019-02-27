@@ -23,6 +23,7 @@
 #include "lowlevel_strided_loops.h"
 #include "reduction.h"
 #include "extobj.h"  /* for _check_ufunc_fperr */
+#include "mkl_cpy.h"
 
 /*
  * Allocates a result array for a reduction operation, with

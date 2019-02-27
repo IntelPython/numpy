@@ -21,6 +21,7 @@
 
 #include "Python.h"
 
+#include "aligned_alloc.h"
 #include "npy_config.h"
 
 #include "numpy/arrayobject.h"
@@ -30,6 +31,7 @@
 
 #include "numpy/npy_math.h"
 #include "number.h"
+#include "mkl_cpy.h"
 
 static PyUFuncGenericFunction pyfunc_functions[] = {PyUFunc_On_Om};
 
