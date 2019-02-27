@@ -18,6 +18,7 @@
 #include "scalartypes.h"
 
 #include "common.h"
+#include "mkl_cpy.h"
 
 static PyArray_Descr *
 _descr_from_subtype(PyObject *type)

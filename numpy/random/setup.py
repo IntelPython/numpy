@@ -4,6 +4,7 @@ from os.path import join
 import sys
 from distutils.dep_util import newer
 from distutils.msvccompiler import get_build_version as get_msvc_build_version
+from numpy.distutils.system_info import get_info
 
 def needs_mingw_ftime_workaround():
     # We need the mingw workaround for _ftime if the msvc runtime version is
@@ -39,7 +40,7 @@ def configuration(parent_package='',top_path=None):
     if needs_mingw_ftime_workaround():
         defs.append(("NPY_NEEDS_MINGW_TIME_WORKAROUND", None))
 
-    libs = []
+    libs = ['mkl_cp']
     # Configure mtrand
     config.add_extension('mtrand',
                          sources=[join('mtrand', x) for x in
@@ -50,6 +51,7 @@ def configuration(parent_package='',top_path=None):
                                   join('mtrand', '*.pyx'),
                                   join('mtrand', '*.pxi'),],
                          define_macros=defs,
+                         extra_info=get_info('mkl')
                          )
 
     config.add_data_files(('.', join('mtrand', 'randomkit.h')))

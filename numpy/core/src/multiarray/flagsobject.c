@@ -15,6 +15,7 @@
 #include "array_assign.h"
 
 #include "common.h"
+#include "mkl_cpy.h"
 
 static void
 _UpdateContiguousFlags(PyArrayObject *ap);
