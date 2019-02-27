@@ -15,6 +15,7 @@
 
 #define NPY_NO_DEPRECATED_API NPY_API_VERSION
 #define _MULTIARRAYMODULE
+#include "aligned_alloc.h"
 #include <numpy/arrayobject.h>
 
 #include "npy_config.h"
@@ -25,6 +26,7 @@
 #include "methods.h"
 #include "_datetime.h"
 #include "datetime_strings.h"
+#include "mkl_cpy.h"
 
 /*
  * Imports the PyDateTime functions so we can create these objects.

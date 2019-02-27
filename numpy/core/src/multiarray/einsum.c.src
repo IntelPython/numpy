@@ -48,6 +48,8 @@
 #include <emmintrin.h>
 #endif
 
+#include "mkl_cpy.h"
+
 #define EINSUM_IS_SSE_ALIGNED(x) ((((npy_intp)x)&0xf) == 0)
 
 /********** PRINTF DEBUG TRACING **************/

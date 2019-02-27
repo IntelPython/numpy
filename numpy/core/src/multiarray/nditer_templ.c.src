@@ -11,6 +11,7 @@
 /* Indicate that this .c file is allowed to include the header */
 #define NPY_ITERATOR_IMPLEMENTATION_CODE
 #include "nditer_impl.h"
+#include "mkl_cpy.h"
 
 /* SPECIALIZED iternext functions that handle the non-buffering part */
 

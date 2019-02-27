@@ -16,6 +16,7 @@
 #include "ctors.h"
 
 #include "shape.h"
+#include "mkl_cpy.h"
 
 #include "multiarraymodule.h" /* for interned strings */
 #include "templ_common.h" /* for npy_mul_with_overflow_intp */

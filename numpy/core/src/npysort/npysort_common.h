@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 #include <numpy/ndarraytypes.h>
+#include "mkl_cpy.h"
 
 /*
  *****************************************************************************

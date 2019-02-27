@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <float.h>
 #include <string.h> /* for memcpy */
+#include "mkl_cpy.h"
 
 #define VECTOR_SIZE_BYTES 16
 

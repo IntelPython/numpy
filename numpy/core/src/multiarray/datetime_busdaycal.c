@@ -13,6 +13,7 @@
 
 #define NPY_NO_DEPRECATED_API NPY_API_VERSION
 #define _MULTIARRAYMODULE
+#include "aligned_alloc.h"
 #include <numpy/arrayobject.h>
 
 #include "npy_config.h"
@@ -24,6 +25,7 @@
 #include "_datetime.h"
 #include "datetime_busday.h"
 #include "datetime_busdaycal.h"
+#include "mkl_cpy.h"
 
 NPY_NO_EXPORT int
 PyArray_WeekMaskConverter(PyObject *weekmask_in, npy_bool *weekmask)

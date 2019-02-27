@@ -4,6 +4,7 @@
 
 #define NPY_NO_DEPRECATED_API NPY_API_VERSION
 #define _MULTIARRAYMODULE
+#include "aligned_alloc.h"
 #include "numpy/arrayobject.h"
 #include "numpy/arrayscalars.h"
 
@@ -15,6 +16,7 @@
 #include "iterators.h"
 #include "ctors.h"
 #include "common.h"
+#include "mkl_cpy.h"
 
 #define NEWAXIS_INDEX -1
 #define ELLIPSIS_INDEX -2
