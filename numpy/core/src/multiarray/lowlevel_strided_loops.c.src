@@ -16,6 +16,7 @@
 #include <numpy/arrayobject.h>
 #include <numpy/npy_cpu.h>
 #include <numpy/halffloat.h>
+#include "mkl_cpy.h"
 
 #include "lowlevel_strided_loops.h"
 #include "array_assign.h"

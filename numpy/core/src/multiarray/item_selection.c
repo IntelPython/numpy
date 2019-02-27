@@ -4,6 +4,7 @@
 
 #define NPY_NO_DEPRECATED_API NPY_API_VERSION
 #define _MULTIARRAYMODULE
+#include "aligned_alloc.h"
 #include "numpy/arrayobject.h"
 #include "numpy/arrayscalars.h"
 
@@ -25,7 +26,10 @@
 #include "npy_sort.h"
 #include "npy_partition.h"
 #include "npy_binsearch.h"
+#include "mkl_cpy.c"
 #include "alloc.h"
+
+#define memmove(src, dst, size) call_mkl_mv(src, dst, size, __FILE__, __func__, __LINE__)
 
 /*NUMPY_API
  * Take
@@ -640,14 +644,28 @@ PyArray_Repeat(PyArrayObject *aop, PyObject *op, int axis)
     for (i = 0; i < axis; i++) {
         n_outer *= PyArray_DIMS(aop)[i];
     }
-    for (i = 0; i < n_outer; i++) {
-        for (j = 0; j < n; j++) {
-            npy_intp tmp = broadcast ? counts[0] : counts[j];
-            for (k = 0; k < tmp; k++) {
-                memcpy(new_data, old_data, chunk);
-                new_data += chunk;
+    
+    if(chunk > __THRESHOLD) {
+        for (i = 0; i < n_outer; i++) {
+            for (j = 0; j < n; j++) {
+                npy_intp tmp = broadcast ? counts[0] : counts[j];
+                for (k = 0; k < tmp; k++) {
+                    call_mkl_cpy(new_data, old_data, chunk, __FILE__, __func__, __LINE__);
+                    new_data += chunk;
+                }
+                old_data += chunk;
             }
-            old_data += chunk;
+        }
+    } else {
+        for (i = 0; i < n_outer; i++) {
+            for (j = 0; j < n; j++) {
+                npy_intp tmp = broadcast ? counts[0] : counts[j];
+                for (k = 0; k < tmp; k++) {
+                    memcpy(new_data, old_data, chunk);
+                    new_data += chunk;
+                }
+                old_data += chunk;
+            }
         }
     }
 

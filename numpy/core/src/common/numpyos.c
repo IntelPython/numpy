@@ -25,6 +25,7 @@
 #endif
 
 
+#include "mkl_cpy.h"
 
 /*
  * From the C99 standard, section 7.19.6: The exponent always contains at least
