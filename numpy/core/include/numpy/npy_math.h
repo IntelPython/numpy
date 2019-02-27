@@ -197,7 +197,7 @@ double npy_spacing(double x);
 
 /* use builtins to avoid function calls in tight loops
  * only available if npy_config.h is available (= numpys own build) */
-#if HAVE___BUILTIN_ISNAN
+#if HAVE___BUILTIN_ISNAN && !defined(NPY_BROKEN_INF_NAN_BUILTINS)
     #define npy_isnan(x) __builtin_isnan(x)
 #else
     #ifndef NPY_HAVE_DECL_ISNAN
@@ -213,7 +213,7 @@ double npy_spacing(double x);
 
 
 /* only available if npy_config.h is available (= numpys own build) */
-#if HAVE___BUILTIN_ISFINITE
+#if HAVE___BUILTIN_ISFINITE && !defined(NPY_BROKEN_INF_NAN_BUILTINS)
     #define npy_isfinite(x) __builtin_isfinite(x)
 #else
     #ifndef NPY_HAVE_DECL_ISFINITE
@@ -228,7 +228,7 @@ double npy_spacing(double x);
 #endif
 
 /* only available if npy_config.h is available (= numpys own build) */
-#if HAVE___BUILTIN_ISINF
+#if HAVE___BUILTIN_ISINF && !defined(NPY_BROKEN_INF_NAN_BUILTINS)
     #define npy_isinf(x) __builtin_isinf(x)
 #else
     #ifndef NPY_HAVE_DECL_ISINF
@@ -250,8 +250,10 @@ double npy_spacing(double x);
         (sizeof (x) == sizeof (long double) ? _npy_signbit_ld (x) \
          : sizeof (x) == sizeof (double) ? _npy_signbit_d (x) \
          : _npy_signbit_f (x))
+    #define true_npy_signbit(x) (signbit((x)) != 0 ? 1 : 0)
 #else
     #define npy_signbit(x) signbit((x))
+    #define true_npy_signbit(x) (signbit((x)) != 0 ? 1 : 0)
 #endif
 
 /*

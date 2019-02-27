@@ -18,6 +18,7 @@ from numpy.testing import (
         )
 from numpy.compat import asbytes, asunicode, long, pickle
 
+dec = pytest.mark
 try:
     RecursionError
 except NameError:
@@ -1092,6 +1093,14 @@ class TestRegression(object):
         xpd = xp.astype(np.float64)
         assert_((xp.__array_interface__['data'][0] !=
                 xpd.__array_interface__['data'][0]))
+
+    @dec.skipif(sys.platform == "win32", reason="Memory hog, skip on machines with low memory")
+    def test_astype_largearray(self):
+        intp_size = np.dtype(np.intp).itemsize
+        if intp_size == 8:
+            x = np.empty((987, 987, 987), dtype=np.float64)
+            # astype causes memmove of size > 2**32. Should not crash
+            y = x.astype(dtype=np.float64)
 
     def test_compress_small_type(self):
         # Ticket #789, changeset 5217.

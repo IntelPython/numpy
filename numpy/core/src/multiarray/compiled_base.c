@@ -1524,7 +1524,7 @@ pack_inner(const char *inptr,
     npy_intp index = 0;
     int remain = n_in % 8;              /* uneven bits */
 
-#if defined NPY_HAVE_SSE2_INTRINSICS && defined HAVE__M_FROM_INT64
+#if defined NPY_HAVE_SSE2_INTRINSICS && defined HAVE__M_FROM_INT64 && defined (_MSC_VER) && (_MSC_VER > 1500)
     if (in_stride == 1 && element_size == 1 && n_out > 2) {
         __m128i zero = _mm_setzero_si128();
         /* don't handle non-full 8-byte remainder */
