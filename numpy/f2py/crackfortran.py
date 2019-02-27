@@ -2410,6 +2410,20 @@ def _selected_real_kind_func(p, r=0, radix=0):
     return -1
 
 
+def _selected_real_kind_func_intel(p, r=0, radix=0):
+    # Intel(R) Fotran compiler only supports kinds 4, 8, 16
+    # XXX: This should be processor dependent
+    # This is only good for 0 <= p <= 20
+    if p < 7:
+        return 4
+    if p < 16:
+        return 8
+    if p <= 20:
+        return 16
+    return -1
+
+_selected_real_kind_func = _selected_real_kind_func_intel
+
 def get_parameters(vars, global_params={}):
     params = copy.copy(global_params)
     g_params = copy.copy(global_params)

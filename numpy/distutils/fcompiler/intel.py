@@ -1,8 +1,12 @@
 # http://developer.intel.com/software/products/compilers/flin/
 from __future__ import division, absolute_import, print_function
 
+import re
 import sys
+import platform
+from os import environ
 
+from numpy.distutils.exec_command import exec_command
 from numpy.distutils.ccompiler import simple_version_match
 from numpy.distutils.fcompiler import FCompiler, dummy_fortran_file
 
@@ -27,6 +31,17 @@ class BaseIntelFCompiler(FCompiler):
         assert "," not in dir
 
         return '-Wl,-rpath=%s' % dir
+
+
+    def get_version(self):
+        if platform.system() == 'Windows':
+            version_cmd = "icl -dummy"
+            status, output = exec_command(version_cmd, use_tee=0)
+            version = re.search(r'Version\s*([\d.]+)', output).group(1)
+        else:
+            version_cmd = "icc -dumpversion"
+            status, version = exec_command(version_cmd, use_tee=0)
+        return version
 
 
 class IntelFCompiler(BaseIntelFCompiler):
@@ -60,8 +75,7 @@ class IntelFCompiler(BaseIntelFCompiler):
 
     def get_flags_opt(self):  # Scipy test failures with -O2
         v = self.get_version()
-        mpopt = 'openmp' if v and v < '15' else 'qopenmp'
-        return ['-fp-model strict -O1 -{}'.format(mpopt)]
+        return ['-fp-model', 'strict', '-O3']
 
     def get_flags_arch(self):
         return []
@@ -127,10 +141,10 @@ class IntelEM64TFCompiler(IntelFCompiler):
     def get_flags_opt(self):  # Scipy test failures with -O2
         v = self.get_version()
         mpopt = 'openmp' if v and v < '15' else 'qopenmp'
-        return ['-fp-model strict -O1 -{}'.format(mpopt)]
+        return ['-fp-model', 'strict', '-O3']
 
     def get_flags_arch(self):
-        return ['']
+        return environ.get('ARCH_FLAGS', '-xSSE4.2 -axCORE-AVX2,COMMON-AVX512').strip().split()
 
 # Is there no difference in the version string between the above compilers
 # and the Visual compilers?
@@ -173,10 +187,10 @@ class IntelVisualFCompiler(BaseIntelFCompiler):
         return []
 
     def get_flags_debug(self):
-        return ['/4Yb', '/d2']
+        return ["/4Yb", "/d2"]
 
     def get_flags_opt(self):
-        return ['/O1']  # Scipy test failures with /O2
+        return ["/O3", "/fp:strict"]  # Scipy test failures with /O2
 
     def get_flags_arch(self):
         return ["/arch:IA32", "/QaxSSE3"]
@@ -212,7 +226,7 @@ class IntelEM64VisualFCompiler(IntelVisualFCompiler):
     version_match = simple_version_match(start=r'Intel\(R\).*?64,')
 
     def get_flags_arch(self):
-        return ['']
+        return environ.get('ARCH_FLAGS', '/QxSSE4.2 /QaxCORE-AVX2,COMMON-AVX512').strip().split()
 
 
 if __name__ == '__main__':

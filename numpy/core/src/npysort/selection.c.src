@@ -70,6 +70,7 @@ static NPY_INLINE void store_pivot(npy_intp pivot, npy_intp kth,
  *         npy_ushort, npy_float, npy_double, npy_longdouble, npy_cfloat,
  *         npy_cdouble, npy_clongdouble#
  * #inexact = 0*11, 1*7#
+ * #iccnovector = 0, 1*2, 0*15#
  */
 
 static npy_intp
@@ -254,6 +255,11 @@ static int
         npy_intp minidx = i;
         @type@ minval = v[IDX(i)];
         npy_intp k;
+#if @iccnovector@
+#if defined(__INTEL_COMPILER) &&( __INTEL_COMPILER < 1700)
+       #pragma novector
+#endif
+#endif
         for (k = i + 1; k < num; k++) {
             if (@TYPE@_LT(v[IDX(k)], minval)) {
                 minidx = k;
