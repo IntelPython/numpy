@@ -8,6 +8,7 @@ import warnings
 import platform
 from os.path import join
 from numpy.distutils import log
+from numpy.distutils.system_info import get_info
 from distutils.dep_util import newer
 from distutils.sysconfig import get_config_var
 from numpy._build_utils.apple_accelerate import (
@@ -809,7 +810,6 @@ def configuration(parent_package='',top_path=None):
             join('include', 'numpy', 'noprefix.h'),
             join('include', 'numpy', 'npy_interrupt.h'),
             join('include', 'numpy', 'npy_3kcompat.h'),
-            join('include', 'numpy', 'npy_math.h'),
             join('include', 'numpy', 'halffloat.h'),
             join('include', 'numpy', 'npy_common.h'),
             join('include', 'numpy', 'npy_os.h'),
@@ -821,7 +821,7 @@ def configuration(parent_package='',top_path=None):
             join('include', 'numpy', 'npy_1_7_deprecated_api.h'),
             # add library sources as distuils does not consider libraries
             # dependencies
-            ] + npysort_sources + npymath_sources
+            ] + npysort_sources
 
     multiarray_src = [
             join('src', 'multiarray', 'alloc.c'),
@@ -888,13 +888,14 @@ def configuration(parent_package='',top_path=None):
             f.close()
         return []
 
+    loops_src = [join('src', 'umath', 'loops.c.src'),
+                 join('src', 'umath', 'loops.h.src'),]
+
     umath_src = [
             join('src', 'umath', 'umathmodule.c'),
             join('src', 'umath', 'reduction.c'),
             join('src', 'umath', 'funcs.inc.src'),
             join('src', 'umath', 'simd.inc.src'),
-            join('src', 'umath', 'loops.h.src'),
-            join('src', 'umath', 'loops.c.src'),
             join('src', 'umath', 'matmul.h.src'),
             join('src', 'umath', 'matmul.c.src'),
             join('src', 'umath', 'ufunc_object.c'),
@@ -917,6 +918,20 @@ def configuration(parent_package='',top_path=None):
             join(codegen_dir, 'generate_ufunc_api.py'),
             ]
 
+    if platform.system() == "Windows":
+        eca = ['/fp:fast=2', '/Qimf-precision=high', '/Qprec-sqrt', '/Qstd=c99']
+        if sys.version_info < (3, 0):
+            eca.append('/Qprec-div')
+    else:
+        eca = ['-fp-model', 'fast=2', '-fimf-precision=high', '-prec-sqrt']
+    config.add_library('loops',
+                       sources=loops_src,
+                       include_dirs=[],
+                       extra_compiler_args=eca,
+                       depends=deps + umath_deps,
+                       macros=getattr(config, 'define_macros', getattr(config.get_distribution(), 'define_macros', []))
+                       )
+
     config.add_extension('_multiarray_umath',
                          sources=multiarray_src + umath_src +
                                  npymath_sources + common_src +
@@ -928,9 +943,10 @@ def configuration(parent_package='',top_path=None):
                                   generate_umath_c,
                                   generate_ufunc_api,
                                  ],
+                         extra_compile_args=['/Qstd=c99' if platform.system() == "Windows" else ''],
                          depends=deps + multiarray_deps + umath_deps +
                                 common_deps,
-                         libraries=['npymath', 'npysort'],
+                         libraries=['loops', 'npymath', 'npysort'],
                          extra_info=extra_info)
 
     #######################################################################
