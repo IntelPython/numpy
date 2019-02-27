@@ -1,6 +1,7 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include "structmember.h"
+#include "aligned_alloc.h"
 
 #if PY_VERSION_HEX >= 0x03060000
 #include <pymem.h>
@@ -86,6 +87,7 @@ _npy_alloc_cache(npy_uintp nelem, npy_uintp esz, npy_uint msz,
     return p;
 }
 
+
 /*
  * return pointer p to cache, nelem is number of elements of the cache bucket
  * size (1 or sizeof(npy_intp)) of the block pointed too
@@ -153,6 +155,7 @@ npy_alloc_cache_dim(npy_uintp sz)
     if (sz < 2) {
         sz = 2;
     }
+
     return _npy_alloc_cache(sz, sizeof(npy_intp), NBUCKETS_DIM, dimcache,
                             &PyArray_malloc);
 }
@@ -164,6 +167,7 @@ npy_free_cache_dim(void * p, npy_uintp sz)
     if (sz < 2) {
         sz = 2;
     }
+
     _npy_free_cache(p, sz, NBUCKETS_DIM, dimcache,
                     &PyArray_free);
 }
@@ -218,7 +222,11 @@ PyDataMem_NEW(size_t size)
 {
     void *result;
 
+#ifdef ALIGNED_ALLOC_H
+    result = call_aligned_malloc(size);
+#else
     result = malloc(size);
+#endif
     if (_PyDataMem_eventhook != NULL) {
         NPY_ALLOW_C_API_DEF
         NPY_ALLOW_C_API
@@ -240,7 +248,11 @@ PyDataMem_NEW_ZEROED(size_t size, size_t elsize)
 {
     void *result;
 
+#ifdef ALIGNED_ALLOC_H
+    result = call_aligned_calloc(size, elsize);
+#else
     result = calloc(size, elsize);
+#endif
     if (_PyDataMem_eventhook != NULL) {
         NPY_ALLOW_C_API_DEF
         NPY_ALLOW_C_API
@@ -261,7 +273,11 @@ NPY_NO_EXPORT void
 PyDataMem_FREE(void *ptr)
 {
     PyTraceMalloc_Untrack(NPY_TRACE_DOMAIN, (npy_uintp)ptr);
+#ifdef ALIGNED_ALLOC_H
+    call_free(ptr);
+#else
     free(ptr);
+#endif
     if (_PyDataMem_eventhook != NULL) {
         NPY_ALLOW_C_API_DEF
         NPY_ALLOW_C_API
@@ -281,7 +297,11 @@ PyDataMem_RENEW(void *ptr, size_t size)
 {
     void *result;
 
+#ifdef ALIGNED_ALLOC_H
+    result = call_aligned_realloc(ptr, size);
+#else
     result = realloc(ptr, size);
+#endif
     if (result != ptr) {
         PyTraceMalloc_Untrack(NPY_TRACE_DOMAIN, (npy_uintp)ptr);
     }

@@ -616,6 +616,7 @@ def configuration(parent_package='',top_path=None):
     config.add_include_dirs(join('src', 'multiarray'))
     config.add_include_dirs(join('src', 'umath'))
     config.add_include_dirs(join('src', 'npysort'))
+    config.add_include_dirs(join('src', 'mkl_defs'))
 
     config.add_define_macros([("NPY_INTERNAL_BUILD", "1")]) # this macro indicates that Numpy build is in process
     config.add_define_macros([("HAVE_NPY_CONFIG_H", "1")])
@@ -712,6 +713,17 @@ def configuration(parent_package='',top_path=None):
                        ]
     config.add_library('npysort',
                        sources=npysort_sources,
+                       include_dirs=[])
+
+    #######################################################################
+    #                         mkl_cp library                              #
+    #######################################################################
+
+    # This library is created for the build but it is not installed
+    mkl_cp_sources = [join('src', 'mkl_defs', 'mkl_cpy.h'),
+                       join('src', 'mkl_defs', 'mkl_cpy.c')]
+    config.add_library('mkl_cp',
+                       sources=mkl_cp_sources,
                        include_dirs=[])
 
     #######################################################################
@@ -871,6 +883,11 @@ def configuration(parent_package='',top_path=None):
             join('src', 'multiarray', 'vdot.c'),
             ]
 
+    aligned_alloc_sources = [
+        join('src', 'mkl_defs', 'aligned_alloc.h'),
+        join('src', 'mkl_defs', 'aligned_alloc.c')
+    ]
+
     #######################################################################
     #             _multiarray_umath module - umath part                   #
     #######################################################################
@@ -942,11 +959,11 @@ def configuration(parent_package='',top_path=None):
                                   join('*.py'),
                                   generate_umath_c,
                                   generate_ufunc_api,
-                                 ],
+                                 ] + aligned_alloc_sources,
                          extra_compile_args=['/Qstd=c99' if platform.system() == "Windows" else ''],
                          depends=deps + multiarray_deps + umath_deps +
                                 common_deps,
-                         libraries=['loops', 'npymath', 'npysort'],
+                         libraries=['loops', 'npymath', 'npysort', 'mkl_cp'],
                          extra_info=extra_info)
 
     #######################################################################
@@ -961,7 +978,10 @@ def configuration(parent_package='',top_path=None):
     #######################################################################
 
     config.add_extension('_rational_tests',
-                    sources=[join('src', 'umath', '_rational_tests.c.src')])
+                    sources=[join('src', 'umath', '_rational_tests.c.src')],
+                    libraries=['mkl_cp'],
+                    extra_info=extra_info
+                    )
 
     #######################################################################
     #                        struct_ufunc_test module                     #

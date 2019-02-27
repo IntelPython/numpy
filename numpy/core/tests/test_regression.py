@@ -1339,6 +1339,17 @@ class TestRegression(object):
             np.arange(sz)
             assert_(np.size == sz)
 
+    @dec.skipif(True, reason="Memory hog. Skip to save infrastructure resources")
+    def test_huge_array_copy(self):
+        #check behavior of altered memcpy/memmove when size of array > 2**sizeof(int)
+        try:
+            arr1 = np.ones([715827883, 3], np.double)
+            arr2 = np.copy(arr1)
+            assert_equal(arr1, arr2)
+        except MemoryError as e:
+            #if cannot allocate memory, let the test pass
+            pass
+
     def test_fromiter_bytes(self):
         # Ticket #1058
         a = np.fromiter(list(range(10)), dtype='b')

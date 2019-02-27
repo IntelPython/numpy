@@ -9,6 +9,7 @@
 #define _MULTIARRAYMODULE
 #define _NPY_NO_DEPRECATIONS /* for NPY_CHAR */
 
+#include "aligned_alloc.h"
 #include "numpy/npy_common.h"
 #include "numpy/arrayobject.h"
 #include "numpy/arrayscalars.h"
@@ -1970,6 +1971,7 @@ static void
 }
 
 /**end repeat**/
+
 
 /**begin repeat
  *

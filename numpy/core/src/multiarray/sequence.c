@@ -16,6 +16,7 @@
 
 #include "sequence.h"
 #include "calculation.h"
+#include "mkl_cpy.h"
 
 /*************************************************************************
  ****************   Implement Sequence Protocol **************************
