@@ -179,7 +179,14 @@ class RoundtripTest(object):
 
 class TestSaveLoad(RoundtripTest):
     def roundtrip(self, *args, **kwargs):
-        RoundtripTest.roundtrip(self, np.save, *args, **kwargs)
+        load_kwds = kwargs.get('load_kwds', {})
+        load_kwds['allow_pickle'] = load_kwds.get('allow_pickle', True)
+        save_kwds = kwargs.get('save_kwds', {})
+        save_kwds['allow_pickle'] = save_kwds.get('allow_pickle', True)
+        kwargs_copy = kwargs
+        kwargs_copy['load_kwds'] = load_kwds
+        kwargs_copy['save_kwds'] = save_kwds
+        RoundtripTest.roundtrip(self, np.save, *args, **kwargs_copy)
         assert_equal(self.arr[0], self.arr_reloaded)
         assert_equal(self.arr[0].dtype, self.arr_reloaded.dtype)
         assert_equal(self.arr[0].flags.fnc, self.arr_reloaded.flags.fnc)
@@ -187,7 +194,11 @@ class TestSaveLoad(RoundtripTest):
 
 class TestSavezLoad(RoundtripTest):
     def roundtrip(self, *args, **kwargs):
-        RoundtripTest.roundtrip(self, np.savez, *args, **kwargs)
+        load_kwds = kwargs.get('load_kwds', {})
+        load_kwds['allow_pickle'] = load_kwds.get('allow_pickle', True)
+        kwargs_copy = kwargs
+        kwargs_copy['load_kwds'] = load_kwds
+        RoundtripTest.roundtrip(self, np.savez, *args, **kwargs_copy)
         try:
             for n, arr in enumerate(self.arr):
                 reloaded = self.arr_reloaded['arr_%d' % n]
