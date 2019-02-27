@@ -14,6 +14,7 @@
 
 #include "npy_pycompat.h"
 #include "ctors.h"
+#include "mkl_cpy.h"
 
 /*
  * Functions only needed on narrow builds of Python for converting back and

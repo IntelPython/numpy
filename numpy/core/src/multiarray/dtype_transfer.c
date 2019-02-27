@@ -13,6 +13,7 @@
 #define PY_SSIZE_T_CLEAN
 #include "Python.h"
 #include "structmember.h"
+#include "aligned_alloc.h"
 
 #define NPY_NO_DEPRECATED_API NPY_API_VERSION
 #define _MULTIARRAYMODULE
@@ -30,6 +31,7 @@
 
 #include "shape.h"
 #include "lowlevel_strided_loops.h"
+#include "mkl_cpy.h"
 #include "alloc.h"
 
 #define NPY_LOWLEVEL_BUFFER_BLOCKSIZE  128
