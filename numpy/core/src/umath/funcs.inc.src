@@ -315,6 +315,13 @@ nc_sqrt@c@(@ctype@ *x, @ctype@ *r)
 }
 
 static void
+nc_invsqrt@c@(@ctype@ *x, @ctype@ *r)
+{
+    *r = npy_cinvsqrt@c@(*x);
+    return;
+}
+
+static void
 nc_rint@c@(@ctype@ *x, @ctype@ *r)
 {
     r->real = npy_rint@c@(x->real);
@@ -334,6 +341,13 @@ nc_log1p@c@(@ctype@ *x, @ctype@ *r)
     @ftype@ l = npy_hypot@c@(x->real + 1,x->imag);
     r->imag = npy_atan2@c@(x->imag, x->real + 1);
     r->real = npy_log@c@(l);
+    return;
+}
+
+static void
+nc_erf@c@(@ctype@ *x, @ctype@ *r)
+{
+    *r = npy_cerf@c@(*x);
     return;
 }
 
