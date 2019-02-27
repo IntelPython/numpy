@@ -11,6 +11,9 @@
 #ifdef __APPLE__
     #undef NPY_SIZEOF_LONG
     #undef NPY_SIZEOF_PY_INTPTR_T
+    #ifdef __INTEL_COMPILER
+        #define NPY_BROKEN_INF_NAN_BUILTINS
+    #endif
 
     #ifdef __LP64__
         #define NPY_SIZEOF_LONG         8

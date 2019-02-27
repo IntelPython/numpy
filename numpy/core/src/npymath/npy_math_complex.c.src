@@ -515,24 +515,44 @@ npy_cpow@c@ (@ctype@ a, @ctype@ b)
             return cmul@c@(a, cmul@c@(a, a));
         }
         else if (n > -100 && n < 100) {
-            @ctype@ p, aa;
-            npy_intp mask = 1;
+#define CIPOW_USE_C99 (defined(__ICC) || defined(__INTEL_COMPILER)) && (@precision@ == 2 || @precision@ == 1)
+#if CIPOW_USE_C99
+#    if @precision@ == 2
+            complex double aa = 1.0, p = ar + I*ai;
+#    else
+            complex float aa = 1.0, p = ar + I*ai;
+#    endif
+#else
+            @ctype@ p = npy_cpack@c@(ar, ai);
+            @ctype@ aa = c_1@c@;
+#endif
             if (n < 0) {
                 n = -n;
             }
-            aa = c_1@c@;
-            p = npy_cpack@c@(ar, ai);
             while (1) {
-                if (n & mask) {
+                if (n & 1) {
+#if CIPOW_USE_C99
+                    aa *= p;
+#else
                     aa = cmul@c@(aa,p);
+#endif
                 }
-                mask <<= 1;
-                if (n < mask || mask <= 0) {
+                n >>= 1;
+                if (!n) {
                     break;
                 }
+#if CIPOW_USE_C99
+                p *= p;
+#else
                 p = cmul@c@(p,p);
+#endif
             }
+#if CIPOW_USE_C99
+            r = npy_cpack@c@(creal(aa), cimag(aa));
+#else
             r = npy_cpack@c@(npy_creal@c@(aa), npy_cimag@c@(aa));
+#endif
+#undef CIPOW_USE_C99
             if (br < 0) {
                 r = cdiv@c@(c_1@c@, r);
             }

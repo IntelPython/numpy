@@ -5,7 +5,6 @@ from distutils.msvc9compiler import MSVCCompiler as _MSVCCompiler
 
 from .system_info import platform_bits
 
-
 def _merge(old, new):
     """Concatenate two environment paths avoiding repeats.
 
@@ -29,7 +28,9 @@ def _merge(old, new):
         Updated environment string.
 
     """
-    if not old:
+    if not new or new in old:
+        return old
+    if not old or old in new:
         return new
     if new in old:
         return old
@@ -63,3 +64,7 @@ class MSVCCompiler(_MSVCCompiler):
         ld_args.append('/MANIFEST')
         _MSVCCompiler.manifest_setup_ldargs(self, output_filename,
                                             build_temp, ld_args)
+
+    # workaround numpy.distutils quotes bug
+    def library_dir_option (self, dir):
+        return '/LIBPATH:' + dir.replace('"','').rstrip('\\')
