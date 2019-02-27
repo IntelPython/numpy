@@ -1100,6 +1100,40 @@ add_newdoc('numpy.core.umath', 'equal',
 
     """)
 
+add_newdoc('numpy.core.umath', 'erf',
+    """
+    Calculate the error function of all elements in the input array.
+
+    Parameters
+    ----------
+    x : array_like
+        Input values.
+    $PARAMS
+
+    Returns
+    -------
+    out : ndarray
+        Output array, element-wise integral (from [-x, x]) of
+        np.exp(np.power(-t, 2)) dt, multiplied by 1/np.pi.
+        $OUT_SCALAR_1
+
+    Notes
+    -----
+    The error function, known as the Gauss error function, is often used
+    in probability and statistics. The error function in statistics can be
+    interpreted as the probability X is in [-x, x] with a mean of 0 and
+    variance of 0.5.
+
+    References
+    ----------
+    .. [1] Wikipedia, "Exponential function",
+           http://en.wikipedia.org/wiki/Exponential_function
+    .. [2] M. Abramovitz and I. A.V Stegun, "Handbook of Mathematical Functions
+           with Formulas, Graphs, and Mathematical Tables," Dover, 1964, p. 297,
+           http://people.math.sfu.ca/~cbm/aands/page_297.htm
+
+    """)
+
 add_newdoc('numpy.core.umath', 'exp',
     """
     Calculate the exponential of all elements in the input array.
@@ -3534,6 +3568,34 @@ add_newdoc('numpy.core.umath', 'sqrt',
 
     """)
 
+add_newdoc('numpy.core.umath', 'invsqrt',
+    """
+    Return the positive 1/square-root of an array, element-wise.
+
+    Parameters
+    ----------
+    x : array_like
+        The values whose 1/square-roots are required.
+    $PARAMS
+
+    Returns
+    -------
+    y : ndarray
+        An array of the same shape as `x`, containing the positive
+        1/square-root of each element in `x`.  If any element in `x` is
+        complex, a complex array is returned (and the 1/square-roots of
+        negative reals are calculated).  If all of the elements in `x`
+        are real, so is `y`, with negative elements returning ``nan``.
+        If `out` was provided, `y` is a reference to it.
+        $OUT_SCALAR_1
+
+    Examples
+    --------
+    >>> np.invsqrt([1,4,9])
+    array([ 1.,  0.5,  0.33333])
+
+    """)
+
 add_newdoc('numpy.core.umath', 'cbrt',
     """
     Return the cube-root of an array, element-wise.
@@ -3553,7 +3615,6 @@ add_newdoc('numpy.core.umath', 'cbrt',
         cube-root of each element in `x`.
         If `out` was provided, `y` is a reference to it.
         $OUT_SCALAR_1
-
 
     Examples
     --------

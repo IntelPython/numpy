@@ -1,5 +1,6 @@
 /* -*- c -*- */
-
+#include "mkl.h"
+#include <fenv.h>
 #define _UMATHMODULE
 #define _MULTIARRAYMODULE
 #define NPY_NO_DEPRECATED_API NPY_API_VERSION
@@ -20,14 +21,6 @@
 
 #include <string.h> /* for memchr */
 
-/*
- * cutoff blocksize for pairwise summation
- * decreasing it decreases errors slightly as more pairs are summed but
- * also lowers performance, as the inner loop is unrolled eight times it is
- * effectively 16
- */
-#define PW_BLOCKSIZE    128
-
 
 /*
  * largest simd vector size in bytes numpy supports
@@ -39,13 +32,89 @@
 #endif
 
 /*
+ * cutoff blocksize for pairwise summation
+ * decreasing it decreases errors slightly as more pairs are summed but
+ * also lowers performance, as the inner loop is unrolled eight times it is
+ * effectively 16
+ */
+#define PW_BLOCKSIZE    128
+#define VML_TRANSCEDENTAL_THRESHOLD 8192
+#define VML_ASM_THRESHOLD 100000
+#define VML_D_THRESHOLD 8000
+
+#define MKL_INT_MAX ((npy_intp) ((~((MKL_UINT) 0)) >> 1))
+
+#define CHUNKED_VML_CALL2(vml_func, n, type, in1, op1)   \
+    do {                                                 \
+        npy_intp _n_ = (n);                              \
+        const npy_intp _chunk_size = MKL_INT_MAX;        \
+        type *in1p = (type *) (in1);                     \
+        type *op1p = (type *) (op1);                     \
+        while (_n_ > _chunk_size) {                      \
+            vml_func((MKL_INT) _chunk_size, in1p, op1p); \
+            _n_ -= _chunk_size;                          \
+            in1p += _chunk_size;                         \
+            op1p += _chunk_size;                         \
+        }                                                \
+        if (_n_) {                                       \
+            vml_func((MKL_INT) _n_, in1p, op1p);         \
+        }                                                \
+    } while (0)
+
+#define CHUNKED_VML_CALL3(vml_func, n, type, in1, in2, op1)     \
+    do  {                                                       \
+        npy_intp _n_ = (n);                                     \
+        const npy_intp _chunk_size = MKL_INT_MAX;               \
+        type *in1p = (type *) (in1);                            \
+        type *in2p = (type *) (in2);                            \
+        type *op1p = (type *) (op1);                            \
+        while (_n_ > _chunk_size) {                             \
+            vml_func((MKL_INT) _chunk_size, in1p, in2p, op1p);  \
+            _n_ -= _chunk_size;                                 \
+            in1p += _chunk_size;                                \
+            in2p += _chunk_size;                                \
+            op1p += _chunk_size;                                \
+        }                                                       \
+        if (_n_) {                                              \
+            vml_func((MKL_INT)_n_, in1p, in2p, op1p);           \
+        }                                                       \
+    } while(0)
+
+
+#define CHUNKED_VML_LINEARFRAC_CALL(vml_func, n, type, in1, op1, scaleA, shiftA, scaleB, shiftB) \
+     do {                                                                                        \
+        npy_intp _n_ = (n);                                                                      \
+        const npy_intp _chunk_size = MKL_INT_MAX;                                                \
+        type *in1p = (type *) (in1);                                                             \
+        type *op1p = (type *) (op1);                                                             \
+        const type _scaleA = (scaleA);                                                           \
+        const type _shiftA = (shiftA);                                                           \
+        const type _scaleB = (scaleB);                                                           \
+        const type _shiftB = (shiftB);                                                           \
+        while (_n_ > _chunk_size) {                                                              \
+            vml_func(_chunk_size, in1p, in1p, _scaleA, _shiftA, _scaleB, _shiftB, op1p);         \
+            _n_ -= _chunk_size;                                                                  \
+            in1p += _chunk_size;                                                                 \
+            op1p += _chunk_size;                                                                 \
+        }                                                                                        \
+        if (_n_) {                                                                               \
+            vml_func((MKL_INT)_n_, in1p, in1p, _scaleA, _shiftA, _scaleB, _shiftB, op1p);        \
+        }                                                                                        \
+    } while(0)
+
+/* for pointers p1, and p2 pointing at contiguous arrays n-elements of size s, are arrays disjoint or same
+ *  when these conditions are not met VML functions may product incorrect output
+ */
+#define DISJOINT_OR_SAME(p1, p2, n, s) (((p1) == (p2)) || ((p2) + (n)*(s) < (p1)) || ((p1) + (n)*(s) < (p2)) )
+
+/*
  * include vectorized functions and dispatchers
  * this file is safe to include also for generic builds
  * platform specific instructions are either masked via the proprocessor or
  * runtime detected
  */
 #include "simd.inc"
-
+#include <stdio.h>
 
 /*
  *****************************************************************************
@@ -87,6 +156,21 @@
     npy_intp n = dimensions[0];\
     npy_intp i;\
     for(i = 0; i < n; i++, ip1 += is1, op1 += os1)
+
+#define UNARY_LOOP_VECTORIZED\
+    char *ip1 = args[0], *op1 = args[1];\
+    npy_intp is1 = steps[0], os1 = steps[1];\
+    npy_intp n = dimensions[0];\
+    npy_intp i;\
+    _Pragma("simd")\
+    for(i = 0; i < n; i++, ip1 += is1, op1 += os1)
+
+#define UNARY_LOOP_DISPATCH(cond, body)\
+    if (cond) {\
+        UNARY_LOOP_VECTORIZED { body; }\
+    } else {\
+        UNARY_LOOP { body; }\
+    }
 
 /*
  * loop with contiguous specialization
@@ -794,14 +878,9 @@ BOOL_@kind@(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED
 NPY_NO_EXPORT void
 BOOL_@kind@(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
 {
-    if (run_unary_simd_@kind@_BOOL(args, dimensions, steps)) {
-        return;
-    }
-    else {
-        UNARY_LOOP {
-            npy_bool in1 = *(npy_bool *)ip1;
-            *((npy_bool *)op1) = in1 @OP@ 0;
-        }
+    UNARY_LOOP {
+        npy_bool in1 = *(npy_bool *)ip1;
+        *((npy_bool *)op1) = in1 @OP@ 0;
     }
 }
 /**end repeat**/
@@ -968,6 +1047,9 @@ NPY_NO_EXPORT NPY_GCC_OPT_3 @ATTR@ void
  * #OP =  >, <#
  **/
 
+#if defined(__ICC) || defined(__INTEL_COMPILER)
+#pragma intel optimization_level 2
+#endif
 NPY_NO_EXPORT void
 @TYPE@_@kind@(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
 {
@@ -1685,22 +1767,776 @@ TIMEDELTA_mm_qm_divmod(char **args, npy_intp *dimensions, npy_intp *steps, void 
  * Float types
  *  #type = npy_float, npy_double#
  *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
  *  #scalarf = npy_sqrtf, npy_sqrt#
  */
 
 NPY_NO_EXPORT void
 @TYPE@_sqrt(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
 {
-    if (!run_unary_simd_sqrt_@TYPE@(args, dimensions, steps)) {
-        UNARY_LOOP {
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))) {
+        CHUNKED_VML_CALL2(v@c@Sqrt, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Sqrt(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+            ,
             const @type@ in1 = *(@type@ *)ip1;
             *(@type@ *)op1 = @scalarf@(in1);
-        }
+	)
     }
 }
 
 /**end repeat**/
 
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_invsqrtf, npy_invsqrt#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_invsqrt(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@InvSqrt, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@InvSqrt(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+            ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #A = F, #
+ *  #c = s, d#
+ *  #scalarf = npy_expf, npy_exp#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_exp(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    int ignore_fpstatus = 0;
+
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))) {
+        ignore_fpstatus = 1;
+        CHUNKED_VML_CALL2(v@c@Exp, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Exp(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+            ,
+            const @type@ in1 = *(@type@ *)ip1;
+            if(1 == 1) {//if(in1 == -NPY_INFINITY@A@){
+                ignore_fpstatus = 1;
+            }
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+    if(ignore_fpstatus) {
+        feclearexcept(FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INVALID);
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_exp2f, npy_exp2#
+ */
+
+/* TODO: Use VML */
+NPY_NO_EXPORT void
+@TYPE@_exp2(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    UNARY_LOOP_DISPATCH(
+        DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+        ,
+        const @type@ in1 = *(@type@ *)ip1;
+        *(@type@ *)op1 = @scalarf@(in1);
+    )
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_expm1f, npy_expm1#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_expm1(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Expm1, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Expm1(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_erff, npy_erf#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_erf(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Erf, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Erf(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_logf, npy_log#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_log(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Ln, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Ln(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_log2f, npy_log2#
+ */
+
+/* TODO: Use VML */
+NPY_NO_EXPORT void
+@TYPE@_log2(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    UNARY_LOOP_DISPATCH(
+        DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+        ,
+        const @type@ in1 = *(@type@ *)ip1;
+        *(@type@ *)op1 = @scalarf@(in1);
+    )
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_log10f, npy_log10#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_log10(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Log10, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Log10(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_log1pf, npy_log1p#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_log1p(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Log1p, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Log1p(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_cosf, npy_cos#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_cos(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Cos, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Cos(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_sinf, npy_sin#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_sin(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Sin, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Sin(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_tanf, npy_tan#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_tan(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Tan, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Tan(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_acosf, npy_acos#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_arccos(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Acos, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Acos(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_asinf, npy_asin#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_arcsin(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Asin, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Asin(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_atanf, npy_atan#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_arctan(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Atan, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Atan(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_coshf, npy_cosh#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_cosh(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Cosh, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Cosh(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_sinhf, npy_sinh#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_sinh(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Sinh, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Sinh(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_tanhf, npy_tanh#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_tanh(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Tanh, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Tanh(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_acoshf, npy_acosh#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_arccosh(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Acosh, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Acosh(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_asinhf, npy_asinh#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_arcsinh(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Asinh, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Asinh(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_atanhf, npy_atanh#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_arctanh(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Atanh, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Atanh(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_fabsf, npy_fabs#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_fabs(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    UNARY_LOOP_DISPATCH(
+        DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+        ,
+        const @type@ in1 = *(@type@ *)ip1;
+        *(@type@ *)op1 = @scalarf@(in1);
+    )
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_floorf, npy_floor#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_floor(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(steps[0] == sizeof(@type@) && steps[1] == sizeof(@type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Floor, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Floor(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_ceilf, npy_ceil#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_ceil(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Ceil, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Ceil(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_rintf, npy_rint#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_rint(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(steps[0] == sizeof(@type@) && steps[1] == sizeof(@type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Rint, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Rint(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_truncf, npy_trunc#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_trunc(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Trunc, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Trunc(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
+
+/**begin repeat
+ * Float types
+ *  #type = npy_float, npy_double#
+ *  #TYPE = FLOAT, DOUBLE#
+ *  #c = s, d#
+ *  #scalarf = npy_cbrtf, npy_cbrt#
+ */
+
+NPY_NO_EXPORT void
+@TYPE@_cbrt(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@c@Cbrt, dimensions[0], @type@, args[0], args[1]);
+        /* v@c@Cbrt(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else {
+        UNARY_LOOP_DISPATCH(
+            DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
+	    ,
+            const @type@ in1 = *(@type@ *)ip1;
+            *(@type@ *)op1 = @scalarf@(in1);
+	)
+    }
+}
+
+/**end repeat**/
 
 /**begin repeat
  * Float types
@@ -1717,6 +2553,13 @@ NPY_NO_EXPORT void
  * The recursion depth is O(lg n) as well.
  * when updating also update similar complex floats summation
  */
+#if defined(__ICC) || defined(__INTEL_COMPILER)
+#ifdef _MSC_VER
+#pragma intel optimization_level 1
+#else
+#pragma intel optimization_level 2
+#endif
+#endif
 static @type@
 pairwise_sum_@TYPE@(char *a, npy_intp n, npy_intp stride)
 {
@@ -1788,18 +2631,157 @@ pairwise_sum_@TYPE@(char *a, npy_intp n, npy_intp stride)
  *  #TYPE = FLOAT, DOUBLE, LONGDOUBLE#
  *  #c = f, , l#
  *  #C = F, , L#
+ *  #s = s, d, d#
+ *  #SUPPORTED_BY_VML = 1, 1, 0#
  */
 
 /**begin repeat1
  * Arithmetic
- * # kind = add, subtract, multiply, divide#
- * # OP = +, -, *, /#
- * # PW = 1, 0, 0, 0#
+ * # kind = add#
+ * # OP = +#
+ * # PW = 1#
+ * # VML = Add#
  */
 NPY_NO_EXPORT void
 @TYPE@_@kind@(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
 {
-    if (IS_BINARY_REDUCE) {
+    if(IS_BINARY_CONT(@type@, @type@)) {
+#if @SUPPORTED_BY_VML@
+        if(dimensions[0] > VML_ASM_THRESHOLD &&
+                DISJOINT_OR_SAME(args[0], args[2], dimensions[0], sizeof(@type@)) &&
+                DISJOINT_OR_SAME(args[1], args[2], dimensions[0], sizeof(@type@)) ) {
+            CHUNKED_VML_CALL3(v@s@@VML@, dimensions[0], @type@, args[0], args[1], args[2]);
+            /* v@s@@VML@(dimensions[0], (@type@*) args[0], (@type@*) args[1], (@type@*) args[2]); */
+        } else
+#endif
+        {
+            @type@ *ip1 = (@type@*)args[0];
+            @type@ *ip2 = (@type@*)args[1];
+            @type@ *op1 = (@type@*)args[2];
+            const npy_intp vsize = 64;
+            const npy_intp n = dimensions[0];
+            const npy_intp peel = npy_aligned_block_offset(ip1, sizeof(@type@), vsize, n);
+            const npy_intp blocked_end = npy_blocked_end(peel, sizeof(@type@), vsize, n);
+            npy_intp i;
+
+            for(i = 0; i < peel; i++) {
+                op1[i] = ip1[i] @OP@ ip2[i];
+            }
+
+            {
+                npy_intp j, j_max = blocked_end - peel;
+                if (j_max > 0) {
+                    @type@ *ip1_aligned = ip1 + peel;
+                    @type@ *op1_shifted = op1 + peel;
+                    @type@ *ip2_shifted = ip2 + peel;
+
+		    if( DISJOINT_OR_SAME(op1_shifted, ip1_aligned, j_max, 1) &&
+			DISJOINT_OR_SAME(op1_shifted, ip2_shifted, j_max, 1) ) {
+			__assume_aligned(ip1_aligned, 64);
+			_Pragma("simd")
+			for(j = 0; j < j_max; j++) {
+			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
+			}
+		    } else {
+			__assume_aligned(ip1_aligned, 64);
+			for(j = 0; j < j_max; j++) {
+			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
+			}
+		    }
+
+                    i = blocked_end;
+                }
+            }
+
+            for(; i < n; i++) {
+                op1[i] = ip1[i] @OP@ ip2[i];
+            }
+        }
+    } else if(IS_BINARY_CONT_S1(@type@, @type@)) {
+#if @SUPPORTED_BY_VML@
+        if(dimensions[0] > VML_ASM_THRESHOLD &&
+               DISJOINT_OR_SAME(args[1], args[2], dimensions[0], sizeof(@type@)) ) {
+            CHUNKED_VML_LINEARFRAC_CALL(v@s@LinearFrac, dimensions[0], @type@, args[1], args[2], 1.0, *(@type@*)args[0], 0.0, 1.0);
+            /* v@s@LinearFrac(dimensions[0], (@type@*) args[1], (@type@*) args[1], 1.0, *(@type@*)args[0], 0.0, 1.0, (@type@*) args[2]); */
+        } else
+#endif
+        {
+            @type@ *ip1 = (@type@*)args[0];
+            @type@ *ip2 = (@type@*)args[1];
+            @type@ *op1 = (@type@*)args[2];
+            const npy_intp vsize = 64;
+            const npy_intp n = dimensions[0];
+            const npy_intp peel = npy_aligned_block_offset(ip2, sizeof(@type@), vsize, n);
+            const npy_intp blocked_end = npy_blocked_end(peel, sizeof(@type@), vsize, n);
+            npy_intp i;
+
+            const @type@ ip1c = ip1[0];
+            for(i = 0; i < peel; i++) {
+                op1[i] = ip1c @OP@ ip2[i];
+            }
+
+            {
+                npy_intp j, j_max = blocked_end - peel;
+                if (j_max > 0) {
+                    @type@ *ip2_aligned = ip2 + peel;
+                    @type@ *op1_shifted = op1 + peel;
+
+                    __assume_aligned(ip2_aligned, 64);
+                    for(j = 0; j < j_max; j++) {
+                        op1_shifted[j] = ip1c @OP@ ip2_aligned[j];
+                    }
+
+                    i = blocked_end;
+                }
+            }
+
+            for(; i < n; i++) {
+                op1[i] = ip1c @OP@ ip2[i];
+            }
+        }
+    } else if(IS_BINARY_CONT_S2(@type@, @type@)) {
+#if @SUPPORTED_BY_VML@
+        if(dimensions[0] > VML_ASM_THRESHOLD &&
+               DISJOINT_OR_SAME(args[0], args[2], dimensions[0], sizeof(@type@)) ) {
+            CHUNKED_VML_LINEARFRAC_CALL(v@s@LinearFrac, dimensions[0], @type@, args[0], args[2], 1.0, *(@type@*)args[1], 0.0, 1.0);
+            /* v@s@LinearFrac(dimensions[0], (@type@*) args[0], (@type@*) args[0], 1.0, *(@type@*)args[1], 0.0, 1.0, (@type@*) args[2]); */
+        } else
+#endif
+        {
+            @type@ *ip1 = (@type@*)args[0];
+            @type@ *ip2 = (@type@*)args[1];
+            @type@ *op1 = (@type@*)args[2];
+            const npy_intp vsize = 64;
+            const npy_intp n = dimensions[0];
+            const npy_intp peel = npy_aligned_block_offset(ip1, sizeof(@type@), vsize, n);
+            const npy_intp blocked_end = npy_blocked_end(peel, sizeof(@type@), vsize, n);
+            npy_intp i;
+
+            const @type@ ip2c = ip2[0];
+            for(i = 0; i < peel; i++) {
+                op1[i] = ip1[i] @OP@ ip2c;
+            }
+
+            if (blocked_end > peel) {
+                npy_intp j, j_max = blocked_end - peel;
+                if (j_max > 0) {
+                    @type@ *op1_shifted = op1 + peel;
+                    @type@ *ip1_aligned = ip1 + peel;
+
+                    __assume_aligned(ip1_aligned, 64);
+                    for(j = 0; j < j_max; j++) {
+                        op1_shifted[j] = ip1_aligned[j] @OP@ ip2c;
+                    }
+
+                    i = blocked_end;
+                }
+            }
+
+            for(; i < n; i++) {
+                op1[i] = ip1[i] @OP@ ip2c;
+            }
+        }
+    } else if (IS_BINARY_REDUCE) {
 #if @PW@
         @type@ * iop1 = (@type@ *)args[0];
         npy_intp n = dimensions[0];
@@ -1811,8 +2793,495 @@ NPY_NO_EXPORT void
         }
         *((@type@ *)iop1) = io1;
 #endif
+    } else if (!run_binary_simd_@kind@_@TYPE@(args, dimensions, steps)) {
+        BINARY_LOOP {
+            const @type@ in1 = *(@type@ *)ip1;
+            const @type@ in2 = *(@type@ *)ip2;
+            *((@type@ *)op1) = in1 @OP@ in2;
+        }
     }
-    else if (!run_binary_simd_@kind@_@TYPE@(args, dimensions, steps)) {
+}
+/**end repeat1**/
+
+/**begin repeat1
+ * Arithmetic
+ * # kind = subtract#
+ * # OP = -#
+ * # PW = 0#
+ * # VML = Sub#
+ */
+NPY_NO_EXPORT void
+@TYPE@_@kind@(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_BINARY_CONT(@type@, @type@)) {
+#if @SUPPORTED_BY_VML@
+        if(dimensions[0] > VML_ASM_THRESHOLD &&
+               DISJOINT_OR_SAME(args[0], args[2], dimensions[0], sizeof(@type@)) &&
+               DISJOINT_OR_SAME(args[1], args[2], dimensions[0], sizeof(@type@)) ) {
+            CHUNKED_VML_CALL3(v@s@@VML@, dimensions[0], @type@, args[0], args[1], args[2]);
+            /* v@s@@VML@(dimensions[0], (@type@*) args[0], (@type@*) args[1], (@type@*) args[2]); */
+        } else
+#endif
+        {
+            @type@ *ip1 = (@type@*)args[0];
+            @type@ *ip2 = (@type@*)args[1];
+            @type@ *op1 = (@type@*)args[2];
+            const npy_intp vsize = 64;
+            const npy_intp n = dimensions[0];
+            const npy_intp peel = npy_aligned_block_offset(ip1, sizeof(@type@), vsize, n);
+            const npy_intp blocked_end = npy_blocked_end(peel, sizeof(@type@), vsize, n);
+            npy_intp i;
+
+            for(i = 0; i < peel; i++) {
+                op1[i] = ip1[i] @OP@ ip2[i];
+            }
+
+            {
+                npy_intp j, j_max = blocked_end - peel;
+                if (j_max > 0) {
+                    @type@ *ip1_aligned = ip1 + peel;
+                    @type@ *ip2_shifted = ip2 + peel;
+                    @type@ *op1_shifted = op1 + peel;
+
+		    if( DISJOINT_OR_SAME(op1_shifted, ip1_aligned, j_max, 1) &&
+			DISJOINT_OR_SAME(op1_shifted, ip2_shifted, j_max, 1) ) {
+			__assume_aligned(ip1_aligned, 64);
+			_Pragma("simd")
+			for(j = 0; j < j_max; j++) {
+			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
+			}
+		    } else {
+			__assume_aligned(ip1_aligned, 64);
+			for(j = 0; j < j_max; j++) {
+			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
+			}
+		    }
+
+                    i = blocked_end;
+                }
+            }
+
+            for(; i < n; i++) {
+                op1[i] = ip1[i] @OP@ ip2[i];
+            }
+        }
+    } else if(IS_BINARY_CONT_S1(@type@, @type@)) {
+#if @SUPPORTED_BY_VML@
+        if(dimensions[0] > VML_ASM_THRESHOLD &&
+               DISJOINT_OR_SAME(args[1], args[2], dimensions[0], sizeof(@type@))) {
+            CHUNKED_VML_LINEARFRAC_CALL(v@s@LinearFrac, dimensions[0], @type@, args[1], args[2], -1.0, *(@type@*)args[0], 0.0, 1.0);
+            /* v@s@LinearFrac(dimensions[0], (@type@*) args[1], (@type@*) args[1], -1.0, *(@type@*)args[0], 0.0, 1.0, (@type@*) args[2]); */
+        } else
+#endif
+        {
+            @type@ *ip1 = (@type@*)args[0];
+            @type@ *ip2 = (@type@*)args[1];
+            @type@ *op1 = (@type@*)args[2];
+            const npy_intp vsize = 64;
+            const npy_intp n = dimensions[0];
+            const npy_intp peel = npy_aligned_block_offset(ip2, sizeof(@type@), vsize, n);
+            const npy_intp blocked_end = npy_blocked_end(peel, sizeof(@type@), vsize, n);
+            npy_intp i;
+
+            const @type@ ip1c = ip1[0];
+            for(i = 0; i < peel; i++) {
+                op1[i] = ip1c @OP@ ip2[i];
+            }
+
+            {
+                npy_intp j, j_max = blocked_end - peel;
+                if (j_max > 0) {
+                    @type@ *ip2_aligned = ip2 + peel;
+                    @type@ *op1_shifted = op1 + peel;
+
+                    __assume_aligned(ip2_aligned, 64);
+                    for(j = 0; j < j_max; j++) {
+                        op1_shifted[j] = ip1c @OP@ ip2_aligned[j];
+                    }
+
+                    i = blocked_end;
+                }
+            }
+
+            for(; i < n; i++) {
+                op1[i] = ip1c @OP@ ip2[i];
+            }
+        }
+    } else if(IS_BINARY_CONT_S2(@type@, @type@)) {
+#if @SUPPORTED_BY_VML@
+        if(dimensions[0] > VML_ASM_THRESHOLD &&
+               DISJOINT_OR_SAME(args[0], args[2], dimensions[0], sizeof(@type@)) ) {
+            CHUNKED_VML_LINEARFRAC_CALL(v@s@LinearFrac, dimensions[0], @type@, args[0], args[2], 1.0, -(*(@type@*)args[1]), 0.0, 1.0);
+            /* v@s@LinearFrac(dimensions[0], (@type@*) args[0], (@type@*) args[0], 1.0, -*(@type@*)args[1], 0.0, 1.0, (@type@*) args[2]); */
+        } else
+#endif
+        {
+            @type@ *ip1 = (@type@*)args[0];
+            @type@ *ip2 = (@type@*)args[1];
+            @type@ *op1 = (@type@*)args[2];
+            const npy_intp vsize = 64;
+            const npy_intp n = dimensions[0];
+            const npy_intp peel = npy_aligned_block_offset(ip1, sizeof(@type@), vsize, n);
+            const npy_intp blocked_end = npy_blocked_end(peel, sizeof(@type@), vsize, n);
+            npy_intp i;
+
+            const @type@ ip2c = ip2[0];
+            for(i = 0; i < peel; i++) {
+                op1[i] = ip1[i] @OP@ ip2c;
+            }
+
+            {
+                npy_intp j, j_max = blocked_end - peel;
+                if (j_max > 0) {
+                    @type@ *op1_shifted = op1 + peel;
+                    @type@ *ip1_aligned = ip1 + peel;
+
+                    __assume_aligned(ip1_aligned, 64);
+                    for(j = 0; j < j_max; j++) {
+                        op1_shifted[j] = ip1_aligned[j] @OP@ ip2c;
+                    }
+
+                    i = blocked_end;
+                }
+            }
+
+            for(; i < n; i++) {
+                op1[i] = ip1[i] @OP@ ip2c;
+            }
+        }
+    } else if (IS_BINARY_REDUCE) {
+#if @PW@
+        @type@ * iop1 = (@type@ *)args[0];
+        npy_intp n = dimensions[0];
+
+        *iop1 @OP@= pairwise_sum_@TYPE@(args[1], n, steps[1]);
+#else
+        BINARY_REDUCE_LOOP(@type@) {
+            io1 @OP@= *(@type@ *)ip2;
+        }
+        *((@type@ *)iop1) = io1;
+#endif
+    } else if (!run_binary_simd_@kind@_@TYPE@(args, dimensions, steps)) {
+        BINARY_LOOP {
+            const @type@ in1 = *(@type@ *)ip1;
+            const @type@ in2 = *(@type@ *)ip2;
+            *((@type@ *)op1) = in1 @OP@ in2;
+        }
+    }
+}
+/**end repeat1**/
+
+/**begin repeat1
+ * Arithmetic
+ * # kind = multiply#
+ * # OP = *#
+ * # PW = 0#
+ * # VML = Mul#
+ */
+NPY_NO_EXPORT void
+@TYPE@_@kind@(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_BINARY_CONT(@type@, @type@)) {
+#if @SUPPORTED_BY_VML@
+        if(dimensions[0] > VML_ASM_THRESHOLD &&
+               DISJOINT_OR_SAME(args[0], args[2], dimensions[0], sizeof(@type@)) &&
+               DISJOINT_OR_SAME(args[1], args[2], dimensions[0], sizeof(@type@)) ) {
+            CHUNKED_VML_CALL3(v@s@@VML@, dimensions[0], @type@, args[0], args[1], args[2]);
+            /* v@s@@VML@(dimensions[0], (@type@*) args[0], (@type@*) args[1], (@type@*) args[2]); */
+        } else
+#endif
+        {
+            @type@ *ip1 = (@type@*)args[0];
+            @type@ *ip2 = (@type@*)args[1];
+            @type@ *op1 = (@type@*)args[2];
+            const npy_intp vsize = 64;
+            const npy_intp n = dimensions[0];
+            const npy_intp peel = npy_aligned_block_offset(ip1, sizeof(@type@), vsize, n);
+            const npy_intp blocked_end = npy_blocked_end(peel, sizeof(@type@), vsize, n);
+            npy_intp i;
+
+            for(i = 0; i < peel; i++) {
+                op1[i] = ip1[i] @OP@ ip2[i];
+            }
+
+            {
+                npy_intp j, j_max = blocked_end - peel;
+                if (j_max > 0) {
+                    @type@ *ip1_aligned = ip1 + peel;
+                    @type@ *ip2_shifted = ip2 + peel;
+                    @type@ *op1_shifted = op1 + peel;
+
+		    if( DISJOINT_OR_SAME(op1_shifted, ip1_aligned, j_max, 1) &&
+			DISJOINT_OR_SAME(op1_shifted, ip2_shifted, j_max, 1) ) {
+			__assume_aligned(ip1_aligned, 64);
+			_Pragma("simd")
+			for(j = 0; j < j_max; j++) {
+			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
+			}
+		    } else {
+			__assume_aligned(ip1_aligned, 64);
+			for(j = 0; j < j_max; j++) {
+			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
+			}
+		    }
+
+                    i = blocked_end;
+                }
+            }
+
+            for(; i < n; i++) {
+                op1[i] = ip1[i] @OP@ ip2[i];
+            }
+        }
+    } else if(IS_BINARY_CONT_S1(@type@, @type@)) {
+#if @SUPPORTED_BY_VML@
+        if(dimensions[0] > VML_ASM_THRESHOLD &&
+               DISJOINT_OR_SAME(args[1], args[2], dimensions[0], sizeof(@type@)) ) {
+            CHUNKED_VML_LINEARFRAC_CALL(v@s@LinearFrac, dimensions[0], @type@, args[1], args[2], *(@type@*)args[0], 0.0, 0.0, 1.0);
+            /* v@s@LinearFrac(dimensions[0], (@type@*) args[1], (@type@*) args[1], *(@type@*)args[0], 0.0, 0.0, 1.0, (@type@*) args[2]); */
+        } else
+#endif
+        {
+            @type@ *ip1 = (@type@*)args[0];
+            @type@ *ip2 = (@type@*)args[1];
+            @type@ *op1 = (@type@*)args[2];
+            const npy_intp vsize = 64;
+            const npy_intp n = dimensions[0];
+            const npy_intp peel = npy_aligned_block_offset(ip2, sizeof(@type@), vsize, n);
+            const npy_intp blocked_end = npy_blocked_end(peel, sizeof(@type@), vsize, n);
+            npy_intp i;
+
+            const @type@ ip1c = ip1[0];
+            for(i = 0; i < peel; i++) {
+                op1[i] = ip1c @OP@ ip2[i];
+            }
+
+            {
+                npy_intp j, j_max = blocked_end - peel;
+                if (j_max > 0) {
+                    @type@ *ip2_aligned = ip2 + peel;
+                    @type@ *op1_shifted = op1 + peel;
+
+                    __assume_aligned(ip2_aligned, 64);
+                    for(j = 0; j < j_max; j++) {
+                        op1_shifted[j] = ip1c @OP@ ip2_aligned[j];
+                    }
+
+                    i = blocked_end;
+                }
+            }
+
+            for(; i < n; i++) {
+                op1[i] = ip1c @OP@ ip2[i];
+            }
+        }
+    } else if(IS_BINARY_CONT_S2(@type@, @type@)) {
+#if @SUPPORTED_BY_VML@
+        if(dimensions[0] > VML_ASM_THRESHOLD &&
+               DISJOINT_OR_SAME(args[0], args[2], dimensions[0], sizeof(@type@)) ) {
+            CHUNKED_VML_LINEARFRAC_CALL(v@s@LinearFrac, dimensions[0], @type@, args[0], args[2], *(@type@*)args[1], 0.0, 0.0, 1.0);
+            /* v@s@LinearFrac(dimensions[0], (@type@*) args[0], (@type@*) args[0], *(@type@*)args[1], 0.0, 0.0, 1.0, (@type@*) args[2]); */
+        } else
+#endif
+        {
+            @type@ *ip1 = (@type@*)args[0];
+            @type@ *ip2 = (@type@*)args[1];
+            @type@ *op1 = (@type@*)args[2];
+            const npy_intp vsize = 64;
+            const npy_intp n = dimensions[0];
+            const npy_intp peel = npy_aligned_block_offset(ip1, sizeof(@type@), vsize, n);
+            const npy_intp blocked_end = npy_blocked_end(peel, sizeof(@type@), vsize, n);
+            npy_intp i;
+
+            const @type@ ip2c = ip2[0];
+            for(i = 0; i < peel; i++) {
+                op1[i] = ip1[i] @OP@ ip2c;
+            }
+
+            {
+                npy_intp j, j_max = blocked_end - peel;
+                if (j_max > 0) {
+                    @type@ *op1_shifted = op1 + peel;
+                    @type@ *ip1_aligned = ip1 + peel;
+
+                    __assume_aligned(ip1_aligned, 64);
+                    for(j = 0; j < j_max; j++) {
+                        op1_shifted[j] = ip1_aligned[j] @OP@ ip2c;
+                    }
+
+                    i = blocked_end;
+                }
+            }
+
+            for(; i < n; i++) {
+                op1[i] = ip1[i] @OP@ ip2c;
+            }
+        }
+    } else if (IS_BINARY_REDUCE) {
+#if @PW@
+        @type@ * iop1 = (@type@ *)args[0];
+        npy_intp n = dimensions[0];
+
+        *iop1 @OP@= pairwise_sum_@TYPE@(args[1], n, steps[1]);
+#else
+        BINARY_REDUCE_LOOP(@type@) {
+            io1 @OP@= *(@type@ *)ip2;
+        }
+        *((@type@ *)iop1) = io1;
+#endif
+    } else if (!run_binary_simd_@kind@_@TYPE@(args, dimensions, steps)) {
+        BINARY_LOOP {
+            const @type@ in1 = *(@type@ *)ip1;
+            const @type@ in2 = *(@type@ *)ip2;
+            *((@type@ *)op1) = in1 @OP@ in2;
+        }
+    }
+}
+/**end repeat1**/
+
+/**begin repeat1
+ * Arithmetic
+ * # kind = divide#
+ * # OP = /#
+ * # PW = 0#
+ * # VML = Div#
+ */
+NPY_NO_EXPORT void
+@TYPE@_@kind@(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
+{
+    if(IS_BINARY_CONT(@type@, @type@)) {
+#if @SUPPORTED_BY_VML@
+        if(dimensions[0] > VML_D_THRESHOLD &&
+               DISJOINT_OR_SAME(args[0], args[2], dimensions[0], sizeof(@type@)) &&
+               DISJOINT_OR_SAME(args[1], args[2], dimensions[0], sizeof(@type@)) ) {
+            CHUNKED_VML_CALL3(v@s@@VML@, dimensions[0], @type@, args[0], args[1], args[2]);
+            /* v@s@@VML@(dimensions[0], (@type@*) args[0], (@type@*) args[1], (@type@*) args[2]); */
+        } else
+#endif
+        {
+            @type@ *ip1 = (@type@*)args[0];
+            @type@ *ip2 = (@type@*)args[1];
+            @type@ *op1 = (@type@*)args[2];
+            const npy_intp vsize = 64;
+            const npy_intp n = dimensions[0];
+            const npy_intp peel = npy_aligned_block_offset(ip1, sizeof(@type@), vsize, n);
+            const npy_intp blocked_end = npy_blocked_end(peel, sizeof(@type@), vsize, n);
+            npy_intp i;
+
+	     _Pragma("novector")
+            for(i = 0; i < peel; i++) {
+                op1[i] = ip1[i] @OP@ ip2[i];
+            }
+
+            {
+                npy_intp j, j_max = blocked_end - peel;
+                if (j_max > 0) {
+                    @type@ *ip1_aligned = ip1 + peel, *op1_shifted = op1 + peel, *ip2_shifted = ip2 + peel;
+
+		    if( DISJOINT_OR_SAME(op1_shifted, ip1_aligned, j_max, 1) &&
+			DISJOINT_OR_SAME(op1_shifted, ip2_shifted, j_max, 1) ) {
+			__assume_aligned(ip1_aligned, 64);
+			_Pragma("simd")
+			for(j = 0; j < j_max; j++) {
+			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
+			}
+		    } else {
+			__assume_aligned(ip1_aligned, 64);
+			for(j = 0; j < j_max; j++) {
+			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
+			}
+		    }
+
+                    i = blocked_end;
+                }
+            }
+
+	     _Pragma("novector")
+            for(; i < n; i++) {
+                op1[i] = ip1[i] @OP@ ip2[i];
+            }
+        }
+    } else if(IS_BINARY_CONT_S1(@type@, @type@)) {
+        @type@ *ip1 = (@type@*)args[0];
+        @type@ *ip2 = (@type@*)args[1];
+        @type@ *op1 = (@type@*)args[2];
+        const npy_intp vsize = 64;
+        const npy_intp n = dimensions[0];
+        const npy_intp peel = npy_aligned_block_offset(ip2, sizeof(@type@), vsize, n);
+        const npy_intp blocked_end = npy_blocked_end(peel, sizeof(@type@), vsize, n);
+        npy_intp i;
+
+        const @type@ ip1c = ip1[0];
+	 _Pragma("novector")
+        for(i = 0; i < peel; i++) {
+            op1[i] = ip1c @OP@ ip2[i];
+        }
+
+        {
+            npy_intp j, j_max = blocked_end - peel;
+            if (j_max > 0) {
+                @type@ *ip2_aligned = ip2 + peel, *op1_shifted = op1 + peel;
+
+                __assume_aligned(ip2_aligned, 64);
+                for(j = 0; j < j_max; j++) {
+                    op1_shifted[j] = ip1c @OP@ ip2_aligned[j];
+                }
+
+                i = blocked_end;
+            }
+        }
+
+	 _Pragma("novector")
+        for(; i < n; i++) {
+            op1[i] = ip1c @OP@ ip2[i];
+        }
+    } else if(IS_BINARY_CONT_S2(@type@, @type@)) {
+        @type@ *ip1 = (@type@*)args[0];
+        @type@ *ip2 = (@type@*)args[1];
+        @type@ *op1 = (@type@*)args[2];
+        const npy_intp vsize = 64;
+        const npy_intp n = dimensions[0];
+        const npy_intp peel = npy_aligned_block_offset(ip1, sizeof(@type@), vsize, n);
+        const npy_intp blocked_end = npy_blocked_end(peel, sizeof(@type@), vsize, n);
+        npy_intp i;
+
+        const @type@ ip2c = ip2[0];
+	 _Pragma("novector")
+        for(i = 0; i < peel; i++) {
+            op1[i] = ip1[i] @OP@ ip2c;
+        }
+
+        {
+            npy_intp j, j_max = blocked_end - peel;
+            if (j_max > 0) {
+                @type@ *ip1_aligned = ip1 + peel, *op1_shifted = op1 + peel;
+
+                __assume_aligned(ip1_aligned, 64);
+                for(j = 0; j < j_max; j++) {
+                    op1_shifted[j] = ip1_aligned[j] @OP@ ip2c;
+                }
+
+                i = blocked_end;
+            }
+        }
+
+	 _Pragma("novector")
+        for(; i < n; i++) {
+            op1[i] = ip1[i] @OP@ ip2c;
+        }
+    } else if (IS_BINARY_REDUCE) {
+#if @PW@
+        @type@ * iop1 = (@type@ *)args[0];
+        npy_intp n = dimensions[0];
+
+        *iop1 @OP@= pairwise_sum_@TYPE@(args[1], n, steps[1]);
+#else
+        BINARY_REDUCE_LOOP(@type@) {
+            io1 @OP@= *(@type@ *)ip2;
+        }
+        *((@type@ *)iop1) = io1;
+#endif
+    } else if (!run_binary_simd_@kind@_@TYPE@(args, dimensions, steps)) {
         BINARY_LOOP {
             const @type@ in1 = *(@type@ *)ip1;
             const @type@ in2 = *(@type@ *)ip2;
@@ -1998,9 +3467,15 @@ NPY_NO_EXPORT void
 NPY_NO_EXPORT void
 @TYPE@_square(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(data))
 {
-    char * margs[] = {args[0], args[0], args[1]};
-    npy_intp msteps[] = {steps[0], steps[0], steps[1]};
-    if (!run_binary_simd_multiply_@TYPE@(margs, dimensions, msteps)) {
+#if @SUPPORTED_BY_VML@
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@s@Sqr, dimensions[0], @type@, args[0], args[1]);
+        /* v@s@Sqr(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else
+#endif
+    {
         UNARY_LOOP {
             const @type@ in1 = *(@type@ *)ip1;
             *((@type@ *)op1) = in1*in1;
@@ -2011,10 +3486,15 @@ NPY_NO_EXPORT void
 NPY_NO_EXPORT void
 @TYPE@_reciprocal(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(data))
 {
-    @type@ one = 1.@c@;
-    char * margs[] = {(char*)&one, args[0], args[1]};
-    npy_intp msteps[] = {0, steps[0], steps[1]};
-    if (!run_binary_simd_divide_@TYPE@(margs, dimensions, msteps)) {
+#if @SUPPORTED_BY_VML@
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@s@Inv, dimensions[0], @type@, args[0], args[1]);
+        /* v@s@Inv(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else
+#endif
+    {
         UNARY_LOOP {
             const @type@ in1 = *(@type@ *)ip1;
             *((@type@ *)op1) = 1/in1;
@@ -2042,7 +3522,15 @@ NPY_NO_EXPORT void
 NPY_NO_EXPORT void
 @TYPE@_absolute(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
 {
-    if (!run_unary_simd_absolute_@TYPE@(args, dimensions, steps)) {
+#if @SUPPORTED_BY_VML@
+    if(IS_UNARY_CONT(@type@, @type@) &&
+           dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD &&
+           DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@)) ) {
+        CHUNKED_VML_CALL2(v@s@Abs, dimensions[0], @type@, args[0], args[1]);
+        /* v@s@Abs(dimensions[0], (@type@*) args[0], (@type@*) args[1]); */
+    } else
+#endif
+    {
         UNARY_LOOP {
             const @type@ in1 = *(@type@ *)ip1;
             const @type@ tmp = in1 > 0 ? in1 : -in1;
@@ -2495,9 +3983,18 @@ HALF_ldexp_long(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UN
  * #ftype = npy_float, npy_double, npy_longdouble#
  * #c = f, , l#
  * #C = F, , L#
+ * #s = s, d, d#
+ * #SUPPORTED_BY_VML = 1, 1, 0#
  */
 
 /* similar to pairwise sum of real floats */
+#if defined(__ICC) || defined(__INTEL_COMPILER)
+#ifdef _MSC_VER
+#pragma intel optimization_level 1
+#else
+#pragma intel optimization_level 2
+#endif
+#endif
 static void
 pairwise_sum_@TYPE@(@ftype@ *rr, @ftype@ * ri, char * a, npy_intp n,
                     npy_intp stride)
@@ -2534,14 +4031,14 @@ pairwise_sum_@TYPE@(@ftype@ *rr, @ftype@ * ri, char * a, npy_intp n,
 
         for (i = 8; i < n - (n % 8); i += 8) {
             /* small blocksizes seems to mess with hardware prefetch */
-            NPY_PREFETCH(a + (i + 512/(npy_intp)sizeof(@ftype@))*stride, 0, 3);
-            r[0] += *((@ftype@ *)(a + (i + 0) * stride));
+            NPY_PREFETCH(a + (i + 512 /(npy_intp)sizeof(@ftype@))*stride, 0, 3);
+	    r[0] += *((@ftype@ *)(a + (i + 0) * stride));
             r[1] += *((@ftype@ *)(a + (i + 0) * stride + sizeof(@ftype@)));
-            r[2] += *((@ftype@ *)(a + (i + 2) * stride));
+	    r[2] += *((@ftype@ *)(a + (i + 2) * stride));
             r[3] += *((@ftype@ *)(a + (i + 2) * stride + sizeof(@ftype@)));
-            r[4] += *((@ftype@ *)(a + (i + 4) * stride));
+	    r[4] += *((@ftype@ *)(a + (i + 4) * stride));
             r[5] += *((@ftype@ *)(a + (i + 4) * stride + sizeof(@ftype@)));
-            r[6] += *((@ftype@ *)(a + (i + 6) * stride));
+	    r[6] += *((@ftype@ *)(a + (i + 6) * stride));
             r[7] += *((@ftype@ *)(a + (i + 6) * stride + sizeof(@ftype@)));
         }
 
@@ -2798,10 +4295,30 @@ NPY_NO_EXPORT void
 NPY_NO_EXPORT void
 @TYPE@_absolute(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
 {
-    UNARY_LOOP {
-        const @ftype@ in1r = ((@ftype@ *)ip1)[0];
-        const @ftype@ in1i = ((@ftype@ *)ip1)[1];
-        *((@ftype@ *)op1) = npy_hypot@c@(in1r, in1i);
+    int ignore_fpstatus = 0;
+
+    // FIXME: abs function VML for complex numbers breaks FFT test_basic.py
+    //if(steps[0]/2 == sizeof(@ftype@) && steps[1] == sizeof(@ftype@) && dimensions[0] > VML_TRANSCEDENTAL_THRESHOLD) {
+#if @SUPPORTED_BY_VML@
+    if(0 == 1) {
+        ignore_fpstatus = 1;
+        CHUNKED_VML_CALL2(v@s@Abs, dimensions[0], @ftype@, args[0], args[1]);
+        /* v@s@Abs(dimensions[0], (@ftype@ *) args[0], (@ftype@ *) args[1]); */
+    } else
+#endif
+    {
+        UNARY_LOOP {
+            const @ftype@ in1r = ((@ftype@ *)ip1)[0];
+            const @ftype@ in1i = ((@ftype@ *)ip1)[1];
+            if(in1r == 0.0 && in1i == 0.0){
+                ignore_fpstatus = 1;
+            }
+            *((@ftype@ *)op1) = npy_hypot@c@(in1r, in1i);
+        }
+    }
+
+    if(ignore_fpstatus) {
+        feclearexcept(FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INVALID);
     }
 }
 
@@ -2827,6 +4344,7 @@ NPY_NO_EXPORT void
                             (CEQ(in1r, in1i, 0.0, 0.0) ?  0 : NPY_NAN@C@));
         ((@ftype@ *)op1)[1] = 0;
     }
+    feclearexcept(FE_INVALID);
 }
 
 /**begin repeat1

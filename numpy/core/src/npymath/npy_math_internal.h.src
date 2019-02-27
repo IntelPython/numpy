@@ -379,10 +379,10 @@ NPY_INPLACE double npy_log2(double x)
  */
 
 /**begin repeat1
- * #kind = sin,cos,tan,sinh,cosh,tanh,fabs,floor,ceil,rint,trunc,sqrt,log10,
- *         log,exp,expm1,asin,acos,atan,asinh,acosh,atanh,log1p,exp2,log2#
- * #KIND = SIN,COS,TAN,SINH,COSH,TANH,FABS,FLOOR,CEIL,RINT,TRUNC,SQRT,LOG10,
- *         LOG,EXP,EXPM1,ASIN,ACOS,ATAN,ASINH,ACOSH,ATANH,LOG1P,EXP2,LOG2#
+ * #kind = sin,cos,tan,sinh,cosh,tanh,fabs,floor,ceil,rint,trunc,sqrt,invsqrt,log10,
+ *         log,erf,exp,expm1,asin,acos,atan,asinh,acosh,atanh,log1p,exp2,log2#
+ * #KIND = SIN,COS,TAN,SINH,COSH,TANH,FABS,FLOOR,CEIL,RINT,TRUNC,SQRT,INVSQRT,LOG10,
+ *         LOG,ERF,EXP,EXPM1,ASIN,ACOS,ATAN,ASINH,ACOSH,ATANH,LOG1P,EXP2,LOG2#
  */
 
 #ifdef @kind@@c@
@@ -459,14 +459,27 @@ NPY_INPLACE @type@ npy_frexp@c@(@type@ x, int* exp)
  */
 /**begin repeat1
  * #kind = sin,cos,tan,sinh,cosh,tanh,fabs,floor,ceil,rint,trunc,sqrt,log10,
- *         log,exp,expm1,asin,acos,atan,asinh,acosh,atanh,log1p,exp2,log2#
+ *         log,erf,exp,expm1,asin,acos,atan,asinh,acosh,atanh,log1p,exp2,log2#
  * #KIND = SIN,COS,TAN,SINH,COSH,TANH,FABS,FLOOR,CEIL,RINT,TRUNC,SQRT,LOG10,
- *         LOG,EXP,EXPM1,ASIN,ACOS,ATAN,ASINH,ACOSH,ATANH,LOG1P,EXP2,LOG2#
+ *         LOG,ERF,EXP,EXPM1,ASIN,ACOS,ATAN,ASINH,ACOSH,ATANH,LOG1P,EXP2,LOG2#
  */
 #ifdef HAVE_@KIND@@C@
 NPY_INPLACE @type@ npy_@kind@@c@(@type@ x)
 {
     return @kind@@c@(x);
+}
+#endif
+
+/**end repeat1**/
+
+/**begin repeat1
+ * #kind = invsqrt#
+ * #KIND = INVSQRT#
+ */
+#ifdef HAVE_@KIND@@C@
+NPY_INLINE @type@ npy_@kind@@c@(@type@ x)
+{
+    return 1/sqrt@c@(x);
 }
 #endif
 
