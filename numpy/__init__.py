@@ -192,6 +192,8 @@ else:
     del PytestTester
 
 
+    __mkl_version__ = "__MKL_VERSION__"
+
     def _sanity_check():
         """
         Quick sanity checks for common bugs caused by environment.
