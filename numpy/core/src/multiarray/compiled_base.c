@@ -2,12 +2,14 @@
 #include <Python.h>
 #include <structmember.h>
 #include <string.h>
+#include "aligned_alloc.h"
 
 #define _MULTIARRAYMODULE
 #include "numpy/arrayobject.h"
 #include "numpy/npy_3kcompat.h"
 #include "numpy/npy_math.h"
 #include "npy_config.h"
+#include "mkl_cpy.h"
 #include "templ_common.h" /* for npy_mul_with_overflow_intp */
 #include "lowlevel_strided_loops.h" /* for npy_bswap8 */
 #include "alloc.h"

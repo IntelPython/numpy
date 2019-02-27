@@ -8,6 +8,7 @@
 #include <numpy/ufuncobject.h>
 #include <numpy/npy_3kcompat.h>
 #include <math.h>
+#include "mkl_cpy.h"
 
 #include "common.h"  /* for error_converting */
 

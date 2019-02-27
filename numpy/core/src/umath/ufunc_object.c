@@ -28,6 +28,7 @@
 #define NPY_NO_DEPRECATED_API NPY_API_VERSION
 
 #include "Python.h"
+#include "aligned_alloc.h"
 
 #include "npy_config.h"
 
@@ -47,6 +48,7 @@
 #include "extobj.h"
 #include "common.h"
 #include "numpyos.h"
+#include "mkl_cpy.h"
 
 /********** PRINTF DEBUG TRACING **************/
 #define NPY_UF_DBG_TRACING 0

@@ -26,6 +26,7 @@
 #include "array_assign.h"
 
 #include "methods.h"
+#include "mkl_cpy.h"
 #include "alloc.h"
 
 

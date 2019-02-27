@@ -6,6 +6,7 @@
 
 #define NPY_NO_DEPRECATED_API NPY_API_VERSION
 #define _MULTIARRAYMODULE
+#include "aligned_alloc.h"
 #include "numpy/arrayobject.h"
 
 #include "npy_config.h"
@@ -19,6 +20,7 @@
 #include "getset.h"
 #include "arrayobject.h"
 #include "mem_overlap.h"
+#include "mkl_cpy.h"
 #include "alloc.h"
 #include "buffer.h"
 
