@@ -34,6 +34,21 @@
     npy_intp i;\
     for(i = 0; i < n; i++, ip1 += is1, op1 += os1)
 
+#define UNARY_LOOP_VECTORIZED\
+    char *ip1 = args[0], *op1 = args[1];\
+    npy_intp is1 = steps[0], os1 = steps[1];\
+    npy_intp n = dimensions[0];\
+    npy_intp i;\
+    _Pragma("vector")\
+    for(i = 0; i < n; i++, ip1 += is1, op1 += os1)
+
+#define UNARY_LOOP_DISPATCH(cond, body)\
+    if (cond) {\
+        UNARY_LOOP_VECTORIZED { body; }\
+    } else {\
+        UNARY_LOOP { body; }\
+    }
+
 /** (ip1) -> (op1, op2) */
 #define UNARY_LOOP_TWO_OUT\
     char *ip1 = args[0], *op1 = args[1], *op2 = args[2];\

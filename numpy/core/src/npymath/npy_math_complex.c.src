@@ -369,6 +369,15 @@ npy_clog@c@(@ctype@ z)
 }
 #endif
 
+#ifndef HAVE_CERF@C@
+
+@ctype@
+npy_cerf@c@(@ctype@ z)
+{
+    return z;
+}
+#endif
+
 #ifndef HAVE_CSQRT@C@
 
 /* We risk spurious overflow for components >= DBL_MAX / (1 + sqrt(2)). */
@@ -444,6 +453,15 @@ npy_csqrt@c@(@ctype@ z)
     }
 }
 #undef THRESH
+#endif
+
+#ifndef HAVE_CINVSQRT@C@
+
+@ctype@
+npy_cinvsqrt@c@(@ctype@ z)
+{
+    return z;
+}
 #endif
 
 /*
@@ -1804,9 +1822,9 @@ npy_@kind@@c@(@ctype@ z)
 /**end repeat1**/
 
 /**begin repeat1
- * #kind = cexp,clog,csqrt,ccos,csin,ctan,ccosh,csinh,ctanh,
+ * #kind = cerf,cexp,clog,csqrt,cinvsqrt,ccos,csin,ctan,ccosh,csinh,ctanh,
  *         cacos,casin,catan,cacosh,casinh,catanh#
- * #KIND = CEXP,CLOG,CSQRT,CCOS,CSIN,CTAN,CCOSH,CSINH,CTANH,
+ * #KIND = CERF,CEXP,CLOG,CSQRT,CINVSQRT,CCOS,CSIN,CTAN,CCOSH,CSINH,CTANH,
  *         CACOS,CASIN,CATAN,CACOSH,CASINH,CATANH#
  */
 #ifdef HAVE_@KIND@@C@
