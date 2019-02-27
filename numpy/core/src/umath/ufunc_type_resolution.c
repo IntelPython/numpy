@@ -13,6 +13,7 @@
 #define NPY_NO_DEPRECATED_API NPY_API_VERSION
 
 #include "Python.h"
+#include "aligned_alloc.h"
 
 #include "npy_config.h"
 #include "npy_pycompat.h"
@@ -21,6 +22,7 @@
 #include "ufunc_type_resolution.h"
 #include "ufunc_object.h"
 #include "common.h"
+#include "mkl_cpy.h"
 
 #include "mem_overlap.h"
 #if defined(HAVE_CBLAS)
