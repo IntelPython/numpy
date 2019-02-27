@@ -366,6 +366,7 @@ class TestNDArrayMethods(object):
 
 class TestNumPyFunctions(object):
 
+    @pytest.mark.xfail(reason="numpy.fft is patched in MKL-optimized NumPy")
     def test_set_module(self):
         assert_equal(np.sum.__module__, 'numpy')
         assert_equal(np.char.equal.__module__, 'numpy.char')
