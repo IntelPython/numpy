@@ -15,6 +15,7 @@
 #include <stdbool.h>
 
 #include "Python.h"
+#include "aligned_alloc.h"
 
 #include "npy_config.h"
 #include "npy_pycompat.h"
@@ -25,6 +26,7 @@
 #include "ufunc_object.h"
 #include "common.h"
 #include "convert_datatype.h"
+#include "mkl_cpy.h"
 
 #include "mem_overlap.h"
 #if defined(HAVE_CBLAS)
