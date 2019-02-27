@@ -90,13 +90,13 @@ class TestNanFunctions_MinMax(object):
                 with warnings.catch_warnings(record=True) as w:
                     warnings.simplefilter('always')
                     assert_(np.isnan(f(mat, axis=axis)).all())
-                    assert_(len(w) == 1, 'no warning raised')
+                    assert_(len(w) >= 1, 'no warning raised')
                     assert_(issubclass(w[0].category, RuntimeWarning))
             # Check scalars
             with warnings.catch_warnings(record=True) as w:
                 warnings.simplefilter('always')
                 assert_(np.isnan(f(np.nan)))
-                assert_(len(w) == 1, 'no warning raised')
+                assert_(len(w) >= 1, 'no warning raised')
                 assert_(issubclass(w[0].category, RuntimeWarning))
 
     def test_masked(self):
