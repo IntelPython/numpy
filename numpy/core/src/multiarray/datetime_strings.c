@@ -23,6 +23,7 @@
 #include "methods.h"
 #include "_datetime.h"
 #include "datetime_strings.h"
+#include "mkl_cpy.h"
 
 /*
  * Platform-specific time_t typedef. Some platforms use 32 bit, some use 64 bit

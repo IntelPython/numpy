@@ -22,6 +22,7 @@
 #include "array_assign.h"
 
 #include "convert.h"
+#include "mkl_cpy.h"
 
 int
 fallocate(int fd, int mode, off_t offset, off_t len);
