@@ -29,9 +29,9 @@ def _merge(old, new):
         Updated environment string.
 
     """
-    if new in old:
+    if not new or new in old:
         return old
-    if not old:
+    if not old or old in new:
         return new
 
     # Neither new nor old is empty. Give old priority.
@@ -58,3 +58,7 @@ class MSVCCompiler(_MSVCCompiler):
         if platform_bits == 32:
             self.compile_options += ['/arch:SSE2']
             self.compile_options_debug += ['/arch:SSE2']
+
+    # workaround numpy.distutils quotes bug
+    def library_dir_option (self, dir):
+        return '/LIBPATH:' + dir.replace('"','').rstrip('\\')

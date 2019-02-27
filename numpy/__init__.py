@@ -106,6 +106,7 @@ Exceptions to this rule are documented.
 """
 from __future__ import division, absolute_import, print_function
 
+import os
 import sys
 import warnings
 
@@ -122,6 +123,21 @@ except NameError:
 if __NUMPY_SETUP__:
     sys.stderr.write('Running from numpy source directory.\n')
 else:
+    # Add MKL runtimes to the path
+    """Set environment for additional binaries"""
+    if sys.platform == 'win32':
+        def extendkey(key, value):
+            if os.getenv(key) is None:
+                os.environ[key] = value
+            else:
+                os.environ[key] = os.pathsep.join([value] + os.environ[key].split(os.pathsep))
+
+        for redist in ['DLLs']:
+            redist_dir = os.path.join(sys.prefix, redist)
+
+            if os.path.exists(redist_dir):
+                extendkey('PATH', redist_dir)
+
     try:
         from numpy.__config__ import show as show_config
     except ImportError:
