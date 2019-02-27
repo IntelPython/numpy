@@ -6,6 +6,8 @@ import sys
 from os.path import join
 
 from numpy.distutils.system_info import platform_bits
+from numpy.distutils.ccompiler import new_compiler
+from distutils.sysconfig import customize_compiler
 
 is_msvc = (platform.platform().startswith('Windows') and
            platform.python_compiler().startswith('MS'))
@@ -43,9 +45,16 @@ def configuration(parent_package='', top_path=None):
     # Some bit generators exclude GCC inlining
     EXTRA_COMPILE_ARGS = ['-U__GNUC_GNU_INLINE__']
 
+    ccompiler = new_compiler()
+    customize_compiler(ccompiler)
+    if hasattr(ccompiler, 'compiler'):
+        compiler_name = ccompiler.compiler[0]
+    else:
+        compiler_name = ccompiler.__class__.__name__
+
     if is_msvc and platform_bits == 32:
         # 32-bit windows requires explicit sse2 option
-        EXTRA_COMPILE_ARGS += ['/arch:SSE2']
+        EXTRA_COMPILE_ARGS += [] if ('icl' in compiler_name or 'icc' in compiler_name) else ['/arch:SSE2']
     elif not is_msvc:
         # Some bit generators require c99
         EXTRA_COMPILE_ARGS += ['-std=c99']
@@ -53,7 +62,7 @@ def configuration(parent_package='', top_path=None):
                          for arch in ('x86', 'i686', 'i386', 'amd64'))
         if INTEL_LIKE:
             # Assumes GCC or GCC-like compiler
-            EXTRA_COMPILE_ARGS += ['-msse2']
+            EXTRA_COMPILE_ARGS += [] if ('icc' in compiler_name) else ['-msse2']
 
     # Use legacy integer variable sizes
     LEGACY_DEFS = [('NP_RANDOM_LEGACY', '1')]
