@@ -567,7 +567,7 @@ def _read_array_header(fp, version):
 
     return d['shape'], d['fortran_order'], dtype
 
-def write_array(fp, array, version=None, allow_pickle=True, pickle_kwargs=None):
+def write_array(fp, array, version=None, allow_pickle=False, pickle_kwargs=None):
     """
     Write an array to an NPY file, including a header.
 
@@ -586,7 +586,7 @@ def write_array(fp, array, version=None, allow_pickle=True, pickle_kwargs=None):
         The version number of the format. None means use the oldest
         supported version that is able to store the data.  Default: None
     allow_pickle : bool, optional
-        Whether to allow writing pickled data. Default: True
+        Whether to allow writing pickled data. Default: False
     pickle_kwargs : dict, optional
         Additional keyword arguments to pass to pickle.dump, excluding
         'protocol'. These are only useful when pickling objects in object
@@ -645,7 +645,7 @@ def write_array(fp, array, version=None, allow_pickle=True, pickle_kwargs=None):
                 fp.write(chunk.tobytes('C'))
 
 
-def read_array(fp, allow_pickle=True, pickle_kwargs=None):
+def read_array(fp, allow_pickle=False, pickle_kwargs=None):
     """
     Read an array from an NPY file.
 
@@ -655,7 +655,7 @@ def read_array(fp, allow_pickle=True, pickle_kwargs=None):
         If this is not a real file object, then this may take extra memory
         and time.
     allow_pickle : bool, optional
-        Whether to allow reading pickled data. Default: True
+        Whether to allow reading pickled data. Default: False
     pickle_kwargs : dict
         Additional keyword arguments to pass to pickle.load. These are only
         useful when loading object arrays saved on Python 2 when using
