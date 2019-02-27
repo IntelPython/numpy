@@ -1,13 +1,13 @@
 from __future__ import division, absolute_import, print_function
-
+import re
 import platform
 
 from distutils.unixccompiler import UnixCCompiler
-from numpy.distutils.exec_command import find_executable
-from numpy.distutils.ccompiler import simple_version_match
 if platform.system() == 'Windows':
     from numpy.distutils.msvc9compiler import MSVCCompiler
-
+from numpy.distutils.exec_command import find_executable, exec_command
+from numpy.distutils.ccompiler import simple_version_match
+from os import environ
 
 class IntelCCompiler(UnixCCompiler):
     """A modified Intel compiler compatible with a GCC-built Python."""
@@ -19,9 +19,8 @@ class IntelCCompiler(UnixCCompiler):
         UnixCCompiler.__init__(self, verbose, dry_run, force)
 
         v = self.get_version()
-        mpopt = 'openmp' if v and v < '15' else 'qopenmp'
-        self.cc_exe = ('icc -fPIC -fp-model strict -O3 '
-                       '-fomit-frame-pointer -{}').format(mpopt)
+        self.cc_exe = ('icc -fPIC -fp-model strict -O3 -fomit-frame-pointer ' +
+                        environ.get('CFLAGS', '').strip())
         compiler = self.cc_exe
 
         if platform.system() == 'Darwin':
@@ -34,7 +33,7 @@ class IntelCCompiler(UnixCCompiler):
                              archiver='xiar' + ' cru',
                              linker_exe=compiler + ' -shared-intel',
                              linker_so=compiler + ' ' + shared_flag +
-                             ' -shared-intel')
+                             ' -shared-intel ' + environ.get('LDFLAGS', '').strip())
 
 
 class IntelItaniumCCompiler(IntelCCompiler):
@@ -46,6 +45,16 @@ class IntelItaniumCCompiler(IntelCCompiler):
         if cc_exe:
             break
 
+    def get_version(self):
+        if platform.system() == 'Windows':
+            version_cmd = "icl -dummy"
+            status, output = exec_command(version_cmd, use_tee=0)
+            version = re.search(r'Version\s*([\d.]+)', output).group(1)
+        else:
+            version_cmd = "icc -dumpversion"
+            status, version = exec_command(version_cmd, use_tee=0)
+        return version
+
 
 class IntelEM64TCCompiler(UnixCCompiler):
     """
@@ -53,15 +62,15 @@ class IntelEM64TCCompiler(UnixCCompiler):
     """
     compiler_type = 'intelem'
     cc_exe = 'icc -m64'
-    cc_args = '-fPIC'
+    cc_args = "-fPIC"
 
     def __init__(self, verbose=0, dry_run=0, force=0):
         UnixCCompiler.__init__(self, verbose, dry_run, force)
 
         v = self.get_version()
-        mpopt = 'openmp' if v and v < '15' else 'qopenmp'
-        self.cc_exe = ('icc -m64 -fPIC -fp-model strict -O3 '
-                       '-fomit-frame-pointer -{}').format(mpopt)
+        self.cc_exe = ('icc -m64 -fPIC -fp-model strict -O3 -fomit-frame-pointer {} {}'.format(
+                            environ.get('ARCH_FLAGS', '-xSSE4.2 -axCORE-AVX2,COMMON-AVX512'),
+                            environ.get('CFLAGS', '').strip()))
         compiler = self.cc_exe
 
         if platform.system() == 'Darwin':
@@ -74,7 +83,19 @@ class IntelEM64TCCompiler(UnixCCompiler):
                              archiver='xiar' + ' cru',
                              linker_exe=compiler + ' -shared-intel',
                              linker_so=compiler + ' ' + shared_flag +
-                             ' -shared-intel')
+                             ' -shared-intel ' + environ.get('LDFLAGS', '').strip())
+
+    def get_version(self):
+        if platform.system() == 'Windows':
+            # Intel compiler on Windows does not have way of getting version. Need to parse string using regex to
+            # extract version string. Regex from here: https://stackoverflow.com/a/26480961/5140953
+            version_cmd = "icl -dummy"
+            status, output = exec_command(version_cmd, use_tee=0)
+            version = re.search(r'Version\s*([\d.]+)', output).group(1)
+        else:
+            version_cmd = "icc -dumpversion"
+            status, version = exec_command(version_cmd, use_tee=0)
+        return version
 
 
 if platform.system() == 'Windows':
@@ -92,13 +113,15 @@ if platform.system() == 'Windows':
 
         def initialize(self, plat_name=None):
             MSVCCompiler.initialize(self, plat_name)
-            self.cc = self.find_exe('icl.exe')
+            self.cc = self.find_exe("icl.exe")
             self.lib = self.find_exe('xilib')
-            self.linker = self.find_exe('xilink')
+            self.linker = self.find_exe("xilink")
             self.compile_options = ['/nologo', '/O3', '/MD', '/W3',
-                                    '/Qstd=c99']
+                                    '/Qstd=c99', '/fp:strict'] + environ.get('ARCH_FLAGS', '/QxSSE4.2 /QaxCORE-AVX2,COMMON-AVX512').strip().split()
             self.compile_options_debug = ['/nologo', '/Od', '/MDd', '/W3',
                                           '/Qstd=c99', '/Z7', '/D_DEBUG']
+            self.compile_options.extend(environ.get('CFLAGS', '').strip().split())
+            self.compile_options_debug.extend(environ.get('CFLAGS', '').strip().split())
 
     class IntelEM64TCCompilerW(IntelCCompilerW):
         """
