@@ -185,7 +185,8 @@ def check_math_capabilities(config, moredefs, mathlibs):
 
     # C99 functions: float and long double versions
     check_funcs(C99_FUNCS_SINGLE)
-    check_funcs(C99_FUNCS_EXTENDED)
+    if not (config.check_decl("_MSC_VER") and config.check_decl("__INTEL_COMPILER")):
+        check_funcs(C99_FUNCS_EXTENDED)
 
 def check_complex(config, mathlibs):
     priv = []
@@ -224,7 +225,8 @@ def check_complex(config, mathlibs):
 
         check_prec('')
         check_prec('f')
-        check_prec('l')
+        if not (config.check_decl("_MSC_VER") and config.check_decl("__INTEL_COMPILER")):
+            check_prec('l')
 
     return priv, pub
 
