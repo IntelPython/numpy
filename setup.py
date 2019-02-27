@@ -60,6 +60,9 @@ MICRO               = 4
 ISRELEASED          = True
 VERSION             = '%d.%d.%d' % (MAJOR, MINOR, MICRO)
 
+LOCAL               = 'intel.%s' % os.environ.get('PKG_BUILDNUM','0')
+ISLOCAL             = 'bdist_wheel' in sys.argv[1:]
+
 
 # Return the git revision as a string
 def git_version():
@@ -117,6 +120,8 @@ def get_version_info():
 
     if not ISRELEASED:
         FULLVERSION += '.dev0+' + GIT_REVISION[:7]
+    else:
+        FULLVERSION += '+%s' % LOCAL
 
     return FULLVERSION, GIT_REVISION
 
@@ -139,7 +144,7 @@ if not release:
 
     a = open(filename, 'w')
     try:
-        a.write(cnt % {'version': VERSION,
+        a.write(cnt % {'version': FULLVERSION if ISLOCAL else VERSION,
                        'full_version': FULLVERSION,
                        'git_revision': GIT_REVISION,
                        'isrelease': str(ISRELEASED)})
@@ -410,6 +415,8 @@ def setup_package():
             'console_scripts': f2py_cmds
         },
     )
+    if ISLOCAL:
+        metadata["install_requires"] = [ 'icc_rt','mkl','mkl_fft','mkl_random','tbb4py' ]
 
     if "--force" in sys.argv:
         run_build = True
