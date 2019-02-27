@@ -1,0 +1,112 @@
+{% set version = "1.16.2" %}
+{% set buildnumber = 0 %}
+{% set major = '.'.join(version.split('.')[0:2]) %}
+
+### If you change the iccver here, you must also set the path correctly in build.sh / bld.bat!!!
+{% set iccver = "16.0.3" %}    [unix or py3k]
+{% set iccver = "13.1.5" %}    [win and py27]
+
+package:
+    name: numpy_and_dev
+    version: {{version}}
+
+source:
+    git_url: https://github.com/numpy/numpy
+    git_tag: v{{version}}
+    patches:
+      - v{{major}}-patches/intel_mkl-version.patch         [not nomkl]
+      - v{{major}}-patches/osx-dist.patch                  [osx]
+      - v{{major}}-patches/intel_use_mkl_fft.patch         [not nomkl]
+      - v{{major}}-patches/intel_distribution.patch
+      - v{{major}}-patches/intel_umath_optimizations.patch [not nomkl]
+      - v{{major}}-patches/intel_mkl_mem_all.patch         [not nomkl]
+      - v{{major}}-patches/intel_init_mkl.patch            [not nomkl]
+      - v{{major}}-patches/intel_mkl_random.patch          [not nomkl]
+      - v{{major}}-patches/intel_setup_add_whl_deps.patch  [not nomkl]
+      - v{{major}}-patches/cve_2019_6446_fix.patch
+
+build:
+    number: {{buildnumber}}
+    features:
+      - nomkl                   [x86 and nomkl]
+    force_use_keys:
+      - python
+
+
+outputs:
+    - name: numpy-base
+      script: install_base.sh   # [unix]
+      script: install_base.bat  # [win]
+      requirements:
+          host:
+             - cython
+             - python
+             - setuptools
+             - mkl-devel >=2019.0.0 [not nomkl]
+             - wheel
+          run:
+             - python
+             - icc_rt >={{iccver}}
+             - intelpython >=2019.0
+             - mkl                  [not nomkl]
+             - tbb4py               [not nomkl] # mkl depends on tbb, numpy adds Python specifics
+      test:
+         commands:
+             - test -e $SP_DIR/numpy/distutils/site.cfg     # [unix]
+             - IF NOT EXIST %SP_DIR%\numpy\distutils\site.cfg exit 1  # [win]
+
+    - name: numpy-devel
+      build:
+          run_exports:
+             - {{ pin_subpackage('numpy', min_pin='x.x', max_pin='x.x') }}
+      script: copy_intel_tester.sh  # [unix]
+      script: copy_intel_tester.bat # [win]             
+      requirements:
+          host:
+             - python
+             # these import blas metapackages to ensure consistency with downstream libs that also use blas
+             - mkl-devel    # [not nomkl]
+          run:
+             - python
+             - {{ pin_subpackage('numpy-base', exact=True) }}
+             - icc_rt >={{iccver}}
+             - intelpython >=2019.0
+             - tbb4py  [not nomkl]
+
+    - name: numpy
+      requirements:
+          host:
+              - python
+          run:
+              - python
+              - intelpython >=2019.0
+              - {{ pin_subpackage('numpy-base', exact=True) }}
+              - mkl_fft  [not nomkl]
+              - mkl_random [not nomkl]
+
+
+      test:
+          files:
+              - intel_tester_config.py
+          commands:
+              - python -c "import numpy as np; print(np.__mkl_version__)"
+              - python -c "from intel_tester import test_routine; test_routine.test_exec()"
+              - f2py -h                # [unix]
+          requires:
+              - intel_tester
+              - pytest
+          imports:
+              - numpy
+              - numpy.linalg.lapack_lite
+              - numpy.random.mtrand
+
+      about:
+          home: http://numpy.scipy.org/
+          license: BSD 3-Clause
+          license_file: LICENSE.txt
+          summary: 'Array processing for numbers, strings, records, and objects.'
+          description: |
+              NumPy is the fundamental package needed for scientific computing with Python.
+          doc_url: https://docs.scipy.org/doc/numpy-1.15.0/reference/
+          dev_url: https://github.com/numpy/numpy
+          dev_source_url: https://github.com/numpy/numpy/tree/master/doc
