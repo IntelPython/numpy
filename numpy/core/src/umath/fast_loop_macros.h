@@ -12,6 +12,17 @@
 
 #include "simd.inc"
 
+
+#if defined(__ICC) || defined(__INTEL_COMPILER)
+#define NPY_PRAGMA_VECTOR _Pragma("vector")
+#define NPY_PRAGMA_NOVECTOR _Pragma("novector")
+#define NPY_ASSUME_ALIGNED(p, b) __assume_aligned((p), (b));
+#else
+#define NPY_PRAGMA_VECTOR _Pragma("GCC ivdep")
+#define NPY_PRAGMA_NOVECTOR
+#define NPY_ASSUME_ALIGNED(p, b) 
+#endif
+
 /**
  * Simple unoptimized loop macros that iterate over the ufunc arguments in
  * parallel.
@@ -33,6 +44,21 @@
     npy_intp n = dimensions[0];\
     npy_intp i;\
     for(i = 0; i < n; i++, ip1 += is1, op1 += os1)
+
+#define UNARY_LOOP_VECTORIZED\
+    char *ip1 = args[0], *op1 = args[1];\
+    npy_intp is1 = steps[0], os1 = steps[1];\
+    npy_intp n = dimensions[0];\
+    npy_intp i;\
+    NPY_PRAGMA_VECTOR\
+    for(i = 0; i < n; i++, ip1 += is1, op1 += os1)
+
+#define UNARY_LOOP_DISPATCH(cond, body)\
+    if (cond) {\
+        UNARY_LOOP_VECTORIZED { body; }\
+    } else {\
+        UNARY_LOOP { body; }\
+    }
 
 /** (ip1) -> (op1, op2) */
 #define UNARY_LOOP_TWO_OUT\
