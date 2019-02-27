@@ -425,7 +425,7 @@ class BytesIOSRandomSize(BytesIO):
 
 def roundtrip(arr):
     f = BytesIO()
-    format.write_array(f, arr)
+    format.write_array(f, arr, allow_pickle=True)
     f2 = BytesIO(f.getvalue())
     arr2 = format.read_array(f2, allow_pickle=True)
     return arr2

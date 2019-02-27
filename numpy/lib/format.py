@@ -571,7 +571,7 @@ def _read_array_header(fp, version):
 
     return d['shape'], d['fortran_order'], dtype
 
-def write_array(fp, array, version=None, allow_pickle=True, pickle_kwargs=None):
+def write_array(fp, array, version=None, allow_pickle=False, pickle_kwargs=None):
     """
     Write an array to an NPY file, including a header.
 
@@ -590,7 +590,7 @@ def write_array(fp, array, version=None, allow_pickle=True, pickle_kwargs=None):
         The version number of the format. None means use the oldest
         supported version that is able to store the data.  Default: None
     allow_pickle : bool, optional
-        Whether to allow writing pickled data. Default: True
+        Whether to allow writing pickled data. Default: False
     pickle_kwargs : dict, optional
         Additional keyword arguments to pass to pickle.dump, excluding
         'protocol'. These are only useful when pickling objects in object
