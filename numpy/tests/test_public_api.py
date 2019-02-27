@@ -74,7 +74,7 @@ def test_numpy_linalg():
     bad_results = check_dir(np.linalg)
     assert bad_results == {}
 
-
+@pytest.mark.xfail(reason="numpy.fft is patched in MKL-optimized NumPy", run=False)
 def test_numpy_fft():
     bad_results = check_dir(np.fft)
     assert bad_results == {}
