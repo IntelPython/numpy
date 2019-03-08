@@ -1,0 +1,13 @@
+diff --git a/numpy/__init__.py b/numpy/__init__.py
+index 25e72ee16..cc0a8aebf 100644
+--- a/numpy/__init__.py
++++ b/numpy/__init__.py
+@@ -198,6 +198,8 @@ else:
+     oldnumeric = 'removed'
+     numarray = 'removed'
+ 
++    __mkl_version__ = "__MKL_VERSION__"
++
+     def _sanity_check():
+         """
+         Quick sanity checks for common bugs caused by environment.

@@ -1,4 +1,4 @@
-{% set version = "1.16.2" %}
+{% set version = "1.16.0" %}
 {% set buildnumber = 0 %}
 {% set major = '.'.join(version.split('.')[0:2]) %}
 
@@ -23,7 +23,6 @@ source:
       - v{{major}}-patches/intel_init_mkl.patch            [not nomkl]
       - v{{major}}-patches/intel_mkl_random.patch          [not nomkl]
       - v{{major}}-patches/intel_setup_add_whl_deps.patch  [not nomkl]
-      - v{{major}}-patches/cve_2019_6446_fix.patch
 
 build:
     number: {{buildnumber}}
