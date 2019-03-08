@@ -1,0 +1,10 @@
+diff --git a/numpy/__init__.py b/numpy/__init__.py
+index 0f1bcf7..4b4f5ce 100644
+--- a/numpy/__init__.py
++++ b/numpy/__init__.py
+@@ -197,3 +197,5 @@ else:
+     # but do not use them, we define them here for backward compatibility.
+     oldnumeric = 'removed'
+     numarray = 'removed'
++
++__mkl_version__ = "__MKL_VERSION__"
