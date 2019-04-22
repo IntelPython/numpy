@@ -1,0 +1,1125 @@
+diff --git a/numpy/core/include/numpy/ndarraytypes.h b/numpy/core/include/numpy/ndarraytypes.h
+index 19bbc7435..3bc8a4c4f 100644
+--- a/numpy/core/include/numpy/ndarraytypes.h
++++ b/numpy/core/include/numpy/ndarraytypes.h
+@@ -340,25 +340,27 @@ struct NpyAuxData_tag {
+ 
+ #define NPY_USE_PYMEM 1
+ 
+-#if NPY_USE_PYMEM == 1
+-   /* numpy sometimes calls PyArray_malloc() with the GIL released. On Python
+-      3.3 and older, it was safe to call PyMem_Malloc() with the GIL released.
+-      On Python 3.4 and newer, it's better to use PyMem_RawMalloc() to be able
+-      to use tracemalloc. On Python 3.6, calling PyMem_Malloc() with the GIL
+-      released is now a fatal error in debug mode. */
+-#  if PY_VERSION_HEX >= 0x03040000
+-#    define PyArray_malloc PyMem_RawMalloc
+-#    define PyArray_free PyMem_RawFree
+-#    define PyArray_realloc PyMem_RawRealloc
+-#  else
+-#    define PyArray_malloc PyMem_Malloc
+-#    define PyArray_free PyMem_Free
+-#    define PyArray_realloc PyMem_Realloc
+-#  endif
+-#else
+-#define PyArray_malloc malloc
+-#define PyArray_free free
+-#define PyArray_realloc realloc
++#if !defined(PyArray_malloc)
++#    if NPY_USE_PYMEM == 1
++     /* numpy sometimes calls PyArray_malloc() with the GIL released. On Python
++        3.3 and older, it was safe to call PyMem_Malloc() with the GIL released.
++        On Python 3.4 and newer, it's better to use PyMem_RawMalloc() to be able
++        to use tracemalloc. On Python 3.6, calling PyMem_Malloc() with the GIL
++        released is now a fatal error in debug mode. */
++#       if PY_VERSION_HEX >= 0x03040000
++#          define PyArray_malloc PyMem_RawMalloc
++#          define PyArray_free PyMem_RawFree
++#          define PyArray_realloc PyMem_RawRealloc
++#       else
++#          define PyArray_malloc PyMem_Malloc
++#          define PyArray_free PyMem_Free
++#          define PyArray_realloc PyMem_Realloc
++#       endif
++#   else
++#      define PyArray_malloc malloc
++#      define PyArray_free free
++#      define PyArray_realloc realloc
++#   endif
+ #endif
+ 
+ /* Dimensions and strides */
+diff --git a/numpy/core/setup.py b/numpy/core/setup.py
+index 0d8e96ca1..10acc774f 100644
+--- a/numpy/core/setup.py
++++ b/numpy/core/setup.py
+@@ -624,6 +624,7 @@ def configuration(parent_package='',top_path=None):
+     config.add_include_dirs(join('src', 'multiarray'))
+     config.add_include_dirs(join('src', 'umath'))
+     config.add_include_dirs(join('src', 'npysort'))
++    config.add_include_dirs(join('src', 'mkl_defs'))
+ 
+     config.add_define_macros([("NPY_INTERNAL_BUILD", "1")]) # this macro indicates that Numpy build is in process
+     config.add_define_macros([("HAVE_NPY_CONFIG_H", "1")])
+@@ -705,6 +706,17 @@ def configuration(parent_package='',top_path=None):
+             subst_dict)
+ 
+     #######################################################################
++    #                         aligned_alloc library                       #
++    #######################################################################
++
++    # This library is created for the build but it is not installed
++    aligned_alloc_sources = [join('src', 'mkl_defs', 'aligned_alloc.h'),
++                       join('src', 'mkl_defs', 'aligned_alloc.c')]
++    config.add_library('aligned_alloc',
++                       sources=aligned_alloc_sources,
++                       include_dirs=[])
++
++    #######################################################################
+     #                         npysort library                             #
+     #######################################################################
+ 
+@@ -722,6 +734,17 @@ def configuration(parent_package='',top_path=None):
+                        include_dirs=[])
+ 
+     #######################################################################
++    #                         mkl_cp library                              #
++    #######################################################################
++
++    # This library is created for the build but it is not installed
++    mkl_cp_sources = [join('src', 'mkl_defs', 'mkl_cpy.h'),
++                       join('src', 'mkl_defs', 'mkl_cpy.c')]
++    config.add_library('mkl_cp',
++                       sources=mkl_cp_sources,
++                       include_dirs=[])
++
++    #######################################################################
+     #                        multiarray module                            #
+     #######################################################################
+ 
+@@ -860,7 +883,7 @@ def configuration(parent_package='',top_path=None):
+                                   join('*.py')],
+                          extra_compile_args=['/Qstd=c99' if platform.system() == "Windows" else ''],
+                          depends=deps + multiarray_deps,
+-                         libraries=['npymath', 'npysort'],
++                         libraries=['npymath', 'npysort', 'aligned_alloc', 'mkl_cp'],
+                          extra_info=get_info('mkl'))
+ 
+     #######################################################################
+@@ -935,7 +958,7 @@ def configuration(parent_package='',top_path=None):
+                                  generate_ufunc_api],
+                          include_dirs=[npymathc_path],
+                          depends=deps + umath_deps + loops_src,
+-                         libraries=['loops', 'npymath'],
++                         libraries=['loops', 'npymath', 'aligned_alloc', 'mkl_cp'],
+                          extra_info=mkl_info
+                          )
+ 
+@@ -951,7 +974,10 @@ def configuration(parent_package='',top_path=None):
+     #######################################################################
+ 
+     config.add_extension('test_rational',
+-                    sources=[join('src', 'umath', 'test_rational.c.src')],)
++                    sources=[join('src', 'umath', 'test_rational.c.src')],
++                    libraries=['mkl_cp'],
++                    extra_info=mkl_info
++                    )
+ 
+     #######################################################################
+     #                        struct_ufunc_test module                     #
+diff --git a/numpy/core/src/mkl_defs/aligned_alloc.c b/numpy/core/src/mkl_defs/aligned_alloc.c
+new file mode 100644
+index 000000000..667432dfd
+--- /dev/null
++++ b/numpy/core/src/mkl_defs/aligned_alloc.c
+@@ -0,0 +1,146 @@
++#include "mkl.h"
++#include <stdlib.h>
++#include <stddef.h>
++#ifndef Py_PYTHON_H
++#   include "Python.h"
++#endif
++#include "numpy/npy_common.h"
++
++#define ALIGNMENT 64
++#define __THRESHOLD 524288
++#define __UNIT_STRIDE 1
++#define __NULL_STRIDE 0
++#define __8BYTES_ALIGNMENT_OFFSET(ptr) (((size_t) (ptr)) & 0x7)
++#define MKL_INT_MAX ((size_t) (~((MKL_UINT) 0) >> 1))
++
++static int is_tbb_enabled(void) {
++    static int TBB_ENABLED = -1;
++    if (TBB_ENABLED == -1) {
++            char* mkl_threading = getenv("MKL_THREADING_LAYER");
++            TBB_ENABLED = (!mkl_threading || strncmp(mkl_threading, "TBB", 3) != 0 || strncmp(mkl_threading, "tbb", 3) != 0 ) ? 0 : 1;
++    }
++    return TBB_ENABLED;
++}
++
++static NPY_INLINE void call_dcopy_chunked(size_t size, double* src, double* dest) {
++   while (size > MKL_INT_MAX) {
++       cblas_dcopy(MKL_INT_MAX, src , __NULL_STRIDE, dest, __UNIT_STRIDE);
++       size -= MKL_INT_MAX;
++       dest += MKL_INT_MAX;
++   }
++   if (size > 0) {
++       if (size >= __THRESHOLD) {
++            cblas_dcopy(size, src , __NULL_STRIDE, dest, __UNIT_STRIDE);
++       } else {
++            memset(dest, 0, size * sizeof(double));
++       }
++   }
++}
++
++inline void *_aligned_alloc(size_t size) {
++    /* Only available for Linux and OSX (has been explicitly disabled on Windows : see aligned_alloc.h)
++     * With Windows, we would run into composability issues with modules like h5py which allocate
++     * memory using libc functions in another library, like hdf5 for instance
++     */
++    size = (size > 0) ? size : 1;
++    void* data = NULL;
++    int ret_code = posix_memalign(&data, ALIGNMENT, size);
++    if (ret_code == 0) {
++        return data;
++    }
++    return NULL;
++}
++
++
++#ifdef WITH_ALIGNED_CALLOC
++inline void *_aligned_calloc(size_t nelem, size_t elsize)
++{
++    size_t size = nelem * elsize;
++    void *data = _aligned_alloc(size);
++    char *memory = NULL;
++
++    if (data != NULL) {
++        memory = (char*) data;
++        if((size > __THRESHOLD) && !is_tbb_enabled()) {
++            size_t offset = __8BYTES_ALIGNMENT_OFFSET(8 - __8BYTES_ALIGNMENT_OFFSET(memory));
++            size_t rem_size, ch_size, n_ch = (size - offset) / sizeof(double);
++            double init = 0;
++            if (offset) {
++                memset(memory, 0, offset);
++            }
++
++            call_dcopy_chunked(n_ch, &init, (double*) (memory+offset));
++
++            ch_size = offset + n_ch * sizeof(double);
++            rem_size = size - ch_size;
++            if(rem_size > 0) {
++                memset(memory + ch_size, 0, rem_size);
++            }
++        } else {
++                memset(memory, 0, size);
++        }
++    }
++    return data;
++}
++#endif
++
++#if PY_VERSION_HEX >= 0x03040000
++static int is_tracemalloc_enabled(void) {
++    static int TRACEMALLOC_PRESENT = -1;
++    if (TRACEMALLOC_PRESENT == -1) {
++        TRACEMALLOC_PRESENT = (getenv("PYTHONTRACEMALLOC")) ? 1 : 0;
++    }
++    return TRACEMALLOC_PRESENT;
++}
++#endif
++
++inline void* call_aligned_malloc(size_t size) {
++#if PY_VERSION_HEX >= 0x03040000
++    if(is_tracemalloc_enabled()){
++        return PyMem_RawMalloc(size);
++    } else
++#endif
++    {
++        return _aligned_alloc(size);
++    }
++}
++
++inline void* call_aligned_realloc(void* input, size_t size) {
++#if PY_VERSION_HEX >= 0x03040000
++    if(is_tracemalloc_enabled()){
++        return PyMem_RawRealloc(input, size);
++    } else
++#endif
++    {
++        if (input) {
++          return realloc(input, size ? size : 1);
++        }
++        return _aligned_alloc(size);
++    }
++}
++
++inline void* call_aligned_calloc(size_t num, size_t size) {
++#if PY_VERSION_HEX >= 0x03040000
++    if(is_tracemalloc_enabled()){
++        return PyMem_RawCalloc(num, size);
++    } else
++#endif
++    {
++#ifdef WITH_ALIGNED_CALLOC
++        return _aligned_calloc(num, size);
++#else
++        return calloc(num, size);
++#endif
++    }
++}
++
++inline void call_free(void* ptr) {
++#if PY_VERSION_HEX >= 0x03040000
++    if(is_tracemalloc_enabled()){
++        PyMem_RawFree(ptr);
++    } else
++#endif
++    {
++        free(ptr);
++    }
++}
+diff --git a/numpy/core/src/mkl_defs/aligned_alloc.h b/numpy/core/src/mkl_defs/aligned_alloc.h
+new file mode 100644
+index 000000000..edd00805d
+--- /dev/null
++++ b/numpy/core/src/mkl_defs/aligned_alloc.h
+@@ -0,0 +1,11 @@
++#if !defined(ALIGNED_ALLOC_H) && !defined(_MSC_VER)
++#   define ALIGNED_ALLOC_H
++#   include <stddef.h>
++    inline void* call_aligned_malloc(size_t);
++    inline void* call_aligned_realloc(void*, size_t);
++    inline void* call_aligned_calloc(size_t, size_t);
++    inline void call_free(void*);
++#   define PyArray_malloc call_aligned_malloc 
++#   define PyArray_free call_free
++#   define PyArray_realloc call_aligned_realloc 
++#endif
+diff --git a/numpy/core/src/mkl_defs/mkl_cpy.c b/numpy/core/src/mkl_defs/mkl_cpy.c
+new file mode 100644
+index 000000000..93c4fa006
+--- /dev/null
++++ b/numpy/core/src/mkl_defs/mkl_cpy.c
+@@ -0,0 +1,86 @@
++#include "mkl.h"
++#include <stddef.h>
++
++#define __THRESHOLD 262144
++#define __UNIT_STRIDE 1
++#define __8BYTES_ALIGNMENT_OFFSET(ptr) (((size_t) (ptr)) & 0x7)
++#define MKL_INT_MAX ((size_t) (~((MKL_UINT) 0) >> 1))
++#include "numpy/npy_common.h"
++
++static int is_tbb_enabled(void) {
++        static int TBB_ENABLED = -1;
++        if (TBB_ENABLED == -1) {
++                char* mkl_threading = getenv("MKL_THREADING_LAYER");
++                TBB_ENABLED = (!mkl_threading || strncmp(mkl_threading, "TBB", 3) != 0 || strncmp(mkl_threading, "tbb", 3) != 0 ) ? 0 : 1;
++        }
++        return TBB_ENABLED;
++}
++
++
++static NPY_INLINE void call_dcopy_chunked(size_t size, double* src, double* dest) {
++   while (size > MKL_INT_MAX) {
++       cblas_dcopy(MKL_INT_MAX, src , __UNIT_STRIDE, dest, __UNIT_STRIDE);
++       size -= MKL_INT_MAX;
++       src += MKL_INT_MAX;
++       dest += MKL_INT_MAX;
++   }
++   if (size > 0) {
++        if (size >= __THRESHOLD) {
++            cblas_dcopy(size, src , __UNIT_STRIDE, dest, __UNIT_STRIDE);
++        } else {
++            memmove(dest, src, size * sizeof(double));
++        }
++   }
++}
++
++//#define __DEBUG
++void call_mkl_mv(void* destination, const void* source, size_t size, const char* file_name, const char* func_name, const int line_num) {
++        char* dst = (char*) destination;
++        const char* src = (const char*) source;
++        if((size > __THRESHOLD) && (__8BYTES_ALIGNMENT_OFFSET(src) == __8BYTES_ALIGNMENT_OFFSET(dst)) && ((dst + size < src) || (src + size < dst)) && !is_tbb_enabled()) {
++            // memory segments do not intersect, use threaded MKL BLAS copying functions
++            size_t offset = __8BYTES_ALIGNMENT_OFFSET(8 - __8BYTES_ALIGNMENT_OFFSET(src));
++            size_t rem_size, ch_size, n_ch = (size - offset) / sizeof(double);
++            if (offset) {
++                memmove(dst, src, offset);
++            }
++
++#           ifdef __DEBUG
++            printf("%zu bytes to mkl-mv : %s (%s:%d)\n", size, func_name, file_name, line_num);
++#           endif
++            call_dcopy_chunked(n_ch, (double *) (src + offset), (double*) (dst + offset));
++
++            ch_size = offset + n_ch * sizeof(double);
++            rem_size = size - ch_size;
++            if(rem_size > 0) {
++                memmove(dst + ch_size, src + ch_size, rem_size);
++            }
++        } else {
++                memmove(dst, src, size);
++        }
++}
++
++void call_mkl_cpy(void* destination, const void* source, size_t size, const char* file_name, const char* func_name, const int line_num) {
++        char* dst = (char*) destination;
++        const char* src = (const char*) source;
++        if((size > __THRESHOLD) && (__8BYTES_ALIGNMENT_OFFSET(src) == __8BYTES_ALIGNMENT_OFFSET(dst)) && !is_tbb_enabled()) {
++            size_t offset = __8BYTES_ALIGNMENT_OFFSET(8 - __8BYTES_ALIGNMENT_OFFSET(src));
++            size_t rem_size, ch_size, n_ch = (size - offset) / sizeof(double);
++            if (offset) {
++                memcpy(dst, src, offset);
++            }
++
++#           ifdef __DEBUG
++            printf("%zu bytes to mkl-cp : %s (%s:%d)\n", size, func_name, file_name, line_num);
++#           endif
++            call_dcopy_chunked(n_ch, (double *) (src + offset), (double*) (dst + offset));
++
++            ch_size = offset + n_ch * sizeof(double);
++            rem_size = size - ch_size;
++            if(rem_size > 0) {
++                memmove(dst + ch_size, src + ch_size, rem_size);
++            }
++        } else {
++                memcpy(dst, src, size);
++        }
++}
+diff --git a/numpy/core/src/mkl_defs/mkl_cpy.h b/numpy/core/src/mkl_defs/mkl_cpy.h
+new file mode 100644
+index 000000000..74af118dd
+--- /dev/null
++++ b/numpy/core/src/mkl_defs/mkl_cpy.h
+@@ -0,0 +1,10 @@
++#ifdef __has_include
++#   if __has_include("mkl.h") && !defined(MKL_CPY_H)
++#       define MKL_CPY_H
++#       include <stddef.h>
++        void call_mkl_mv(void*, const void*, size_t, const char*, const char*, const int); 
++        void call_mkl_cpy(void*, const void*, size_t, const char*, const char*, const int);
++#       define memcpy(src, dst, size) call_mkl_cpy(src, dst, size, __FILE__, __func__, __LINE__)
++#       define memmove(src, dst, size) call_mkl_mv(src, dst, size, __FILE__, __func__, __LINE__)
++#   endif
++#endif
+diff --git a/numpy/core/src/multiarray/alloc.c b/numpy/core/src/multiarray/alloc.c
+index f8305d115..a036aa75b 100644
+--- a/numpy/core/src/multiarray/alloc.c
++++ b/numpy/core/src/multiarray/alloc.c
+@@ -1,6 +1,7 @@
+ #define PY_SSIZE_T_CLEAN
+ #include <Python.h>
+ #include "structmember.h"
++#include "aligned_alloc.h"
+ 
+ #if PY_VERSION_HEX >= 0x03060000
+ #include <pymem.h>
+@@ -67,6 +68,7 @@ _npy_alloc_cache(npy_uintp nelem, npy_uintp esz, npy_uint msz,
+ #endif
+ }
+ 
++
+ /*
+  * return pointer p to cache, nelem is number of elements of the cache bucket
+  * size (1 or sizeof(npy_intp)) of the block pointed too
+@@ -133,6 +135,7 @@ npy_alloc_cache_dim(npy_uintp sz)
+     if (sz < 2) {
+         sz = 2;
+     }
++
+     return _npy_alloc_cache(sz, sizeof(npy_intp), NBUCKETS_DIM, dimcache,
+                             &PyArray_malloc);
+ }
+@@ -144,6 +147,7 @@ npy_free_cache_dim(void * p, npy_uintp sz)
+     if (sz < 2) {
+         sz = 2;
+     }
++
+     _npy_free_cache(p, sz, NBUCKETS_DIM, dimcache,
+                     &PyArray_free);
+ }
+@@ -198,7 +202,11 @@ PyDataMem_NEW(size_t size)
+ {
+     void *result;
+ 
++#ifdef ALIGNED_ALLOC_H
++    result = call_aligned_malloc(size);
++#else
+     result = malloc(size);
++#endif
+     if (_PyDataMem_eventhook != NULL) {
+         NPY_ALLOW_C_API_DEF
+         NPY_ALLOW_C_API
+@@ -220,7 +228,11 @@ PyDataMem_NEW_ZEROED(size_t size, size_t elsize)
+ {
+     void *result;
+ 
++#ifdef ALIGNED_ALLOC_H
++    result = call_aligned_calloc(size, elsize);
++#else
+     result = calloc(size, elsize);
++#endif
+     if (_PyDataMem_eventhook != NULL) {
+         NPY_ALLOW_C_API_DEF
+         NPY_ALLOW_C_API
+@@ -241,7 +253,11 @@ NPY_NO_EXPORT void
+ PyDataMem_FREE(void *ptr)
+ {
+     PyTraceMalloc_Untrack(NPY_TRACE_DOMAIN, (npy_uintp)ptr);
++#ifdef ALIGNED_ALLOC_H
++    call_free(ptr);
++#else
+     free(ptr);
++#endif
+     if (_PyDataMem_eventhook != NULL) {
+         NPY_ALLOW_C_API_DEF
+         NPY_ALLOW_C_API
+@@ -261,7 +277,11 @@ PyDataMem_RENEW(void *ptr, size_t size)
+ {
+     void *result;
+ 
++#ifdef ALIGNED_ALLOC_H
++    result = call_aligned_realloc(ptr, size);
++#else
+     result = realloc(ptr, size);
++#endif
+     if (result != ptr) {
+ 	PyTraceMalloc_Untrack(NPY_TRACE_DOMAIN, (npy_uintp)ptr);
+     }
+diff --git a/numpy/core/src/multiarray/array_assign_scalar.c b/numpy/core/src/multiarray/array_assign_scalar.c
+index 7c1b1f16a..c816ef543 100644
+--- a/numpy/core/src/multiarray/array_assign_scalar.c
++++ b/numpy/core/src/multiarray/array_assign_scalar.c
+@@ -9,6 +9,7 @@
+ 
+ #define PY_SSIZE_T_CLEAN
+ #include <Python.h>
++#include "aligned_alloc.h"
+ 
+ #define NPY_NO_DEPRECATED_API NPY_API_VERSION
+ #define _MULTIARRAYMODULE
+diff --git a/numpy/core/src/multiarray/arrayobject.c b/numpy/core/src/multiarray/arrayobject.c
+index 7d62401f2..6d989e4f1 100644
+--- a/numpy/core/src/multiarray/arrayobject.c
++++ b/numpy/core/src/multiarray/arrayobject.c
+@@ -23,6 +23,7 @@ maintainer email:  oliphant.travis@ieee.org
+ #define PY_SSIZE_T_CLEAN
+ #include <Python.h>
+ #include "structmember.h"
++#include "aligned_alloc.h"
+ 
+ /*#include <stdio.h>*/
+ #define NPY_NO_DEPRECATED_API NPY_API_VERSION
+@@ -53,6 +54,7 @@ maintainer email:  oliphant.travis@ieee.org
+ #include "alloc.h"
+ #include "mem_overlap.h"
+ #include "numpyos.h"
++#include "mkl_cpy.h"
+ #include "strfuncs.h"
+ 
+ #include "binop_override.h"
+diff --git a/numpy/core/src/multiarray/arraytypes.c.src b/numpy/core/src/multiarray/arraytypes.c.src
+index d0370fe6b..6285ae7b2 100644
+--- a/numpy/core/src/multiarray/arraytypes.c.src
++++ b/numpy/core/src/multiarray/arraytypes.c.src
+@@ -8,6 +8,7 @@
+ #define _MULTIARRAYMODULE
+ #define _NPY_NO_DEPRECATIONS /* for NPY_CHAR */
+ 
++#include "aligned_alloc.h"
+ #include "numpy/npy_common.h"
+ #include "numpy/arrayobject.h"
+ #include "numpy/arrayscalars.h"
+@@ -33,6 +34,7 @@
+ 
+ #include "cblasfuncs.h"
+ #include "npy_cblas.h"
++
+ #include <limits.h>
+ #include <assert.h>
+ 
+@@ -2039,6 +2041,7 @@ static void
+ 
+ /**end repeat**/
+ 
++
+ /**begin repeat
+  *
+  * #fname = BOOL,
+@@ -4646,8 +4649,10 @@ initialize_builtin_datetime_metadata(void)
+     /* Initialize the base aux data */
+     memset(data1, 0, sizeof(PyArray_DatetimeDTypeMetaData));
+     memset(data2, 0, sizeof(PyArray_DatetimeDTypeMetaData));
++
+     data1->base.free = (NpyAuxData_FreeFunc *)PyArray_free;
+     data2->base.free = (NpyAuxData_FreeFunc *)PyArray_free;
++
+     data1->base.clone = datetime_dtype_metadata_clone;
+     data2->base.clone = datetime_dtype_metadata_clone;
+ 
+diff --git a/numpy/core/src/multiarray/compiled_base.c b/numpy/core/src/multiarray/compiled_base.c
+index 951c4d3ba..b64e34236 100644
+--- a/numpy/core/src/multiarray/compiled_base.c
++++ b/numpy/core/src/multiarray/compiled_base.c
+@@ -2,12 +2,14 @@
+ #include <Python.h>
+ #include <structmember.h>
+ #include <string.h>
++#include "aligned_alloc.h"
+ 
+ #define _MULTIARRAYMODULE
+ #include "numpy/arrayobject.h"
+ #include "numpy/npy_3kcompat.h"
+ #include "numpy/npy_math.h"
+ #include "npy_config.h"
++#include "mkl_cpy.h"
+ #include "templ_common.h" /* for npy_mul_with_overflow_intp */
+ #include "lowlevel_strided_loops.h" /* for npy_bswap8 */
+ #include "alloc.h"
+diff --git a/numpy/core/src/multiarray/convert.c b/numpy/core/src/multiarray/convert.c
+index ca30d3f88..ff5ac20ed 100644
+--- a/numpy/core/src/multiarray/convert.c
++++ b/numpy/core/src/multiarray/convert.c
+@@ -22,6 +22,7 @@
+ #include "array_assign.h"
+ 
+ #include "convert.h"
++#include "mkl_cpy.h"
+ 
+ int
+ fallocate(int fd, int mode, off_t offset, off_t len);
+diff --git a/numpy/core/src/multiarray/convert_datatype.c b/numpy/core/src/multiarray/convert_datatype.c
+index 9927ffb6f..31d076c38 100644
+--- a/numpy/core/src/multiarray/convert_datatype.c
++++ b/numpy/core/src/multiarray/convert_datatype.c
+@@ -19,6 +19,7 @@
+ #include "convert_datatype.h"
+ #include "_datetime.h"
+ #include "datetime_strings.h"
++#include "mkl_cpy.h"
+ 
+ 
+ /*
+diff --git a/numpy/core/src/multiarray/datetime.c b/numpy/core/src/multiarray/datetime.c
+index 93babe8bd..8bb206802 100644
+--- a/numpy/core/src/multiarray/datetime.c
++++ b/numpy/core/src/multiarray/datetime.c
+@@ -15,6 +15,7 @@
+ 
+ #define NPY_NO_DEPRECATED_API NPY_API_VERSION
+ #define _MULTIARRAYMODULE
++#include "aligned_alloc.h"
+ #include <numpy/arrayobject.h>
+ 
+ #include "npy_config.h"
+@@ -25,6 +26,7 @@
+ #include "methods.h"
+ #include "_datetime.h"
+ #include "datetime_strings.h"
++#include "mkl_cpy.h"
+ 
+ /*
+  * Imports the PyDateTime functions so we can create these objects.
+diff --git a/numpy/core/src/multiarray/datetime_busday.c b/numpy/core/src/multiarray/datetime_busday.c
+index c04a6c125..df58067d0 100644
+--- a/numpy/core/src/multiarray/datetime_busday.c
++++ b/numpy/core/src/multiarray/datetime_busday.c
+@@ -22,6 +22,7 @@
+ #include "_datetime.h"
+ #include "datetime_busday.h"
+ #include "datetime_busdaycal.h"
++#include "mkl_cpy.h"
+ 
+ /* Gets the day of the week for a datetime64[D] value */
+ static int
+diff --git a/numpy/core/src/multiarray/datetime_busdaycal.c b/numpy/core/src/multiarray/datetime_busdaycal.c
+index 7a26868e8..561133c20 100644
+--- a/numpy/core/src/multiarray/datetime_busdaycal.c
++++ b/numpy/core/src/multiarray/datetime_busdaycal.c
+@@ -13,6 +13,7 @@
+ 
+ #define NPY_NO_DEPRECATED_API NPY_API_VERSION
+ #define _MULTIARRAYMODULE
++#include "aligned_alloc.h"
+ #include <numpy/arrayobject.h>
+ 
+ #include "npy_config.h"
+@@ -24,6 +25,7 @@
+ #include "_datetime.h"
+ #include "datetime_busday.h"
+ #include "datetime_busdaycal.h"
++#include "mkl_cpy.h"
+ 
+ NPY_NO_EXPORT int
+ PyArray_WeekMaskConverter(PyObject *weekmask_in, npy_bool *weekmask)
+diff --git a/numpy/core/src/multiarray/datetime_strings.c b/numpy/core/src/multiarray/datetime_strings.c
+index b9aeda508..5fdeade74 100644
+--- a/numpy/core/src/multiarray/datetime_strings.c
++++ b/numpy/core/src/multiarray/datetime_strings.c
+@@ -23,6 +23,7 @@
+ #include "methods.h"
+ #include "_datetime.h"
+ #include "datetime_strings.h"
++#include "mkl_cpy.h"
+ 
+ /*
+  * Platform-specific time_t typedef. Some platforms use 32 bit, some use 64 bit
+diff --git a/numpy/core/src/multiarray/descriptor.c b/numpy/core/src/multiarray/descriptor.c
+index f6b29edfe..9303b0c31 100644
+--- a/numpy/core/src/multiarray/descriptor.c
++++ b/numpy/core/src/multiarray/descriptor.c
+@@ -6,6 +6,7 @@
+ 
+ #define NPY_NO_DEPRECATED_API NPY_API_VERSION
+ #define _MULTIARRAYMODULE
++#include "aligned_alloc.h"
+ #include "numpy/arrayobject.h"
+ #include "numpy/arrayscalars.h"
+ 
+@@ -17,6 +18,7 @@
+ #include "common.h"
+ #include "templ_common.h" /* for npy_mul_with_overflow_intp */
+ #include "descriptor.h"
++#include "mkl_cpy.h"
+ #include "alloc.h"
+ 
+ /*
+diff --git a/numpy/core/src/multiarray/dtype_transfer.c b/numpy/core/src/multiarray/dtype_transfer.c
+index 9c27255aa..b56916cf2 100644
+--- a/numpy/core/src/multiarray/dtype_transfer.c
++++ b/numpy/core/src/multiarray/dtype_transfer.c
+@@ -13,6 +13,7 @@
+ #define PY_SSIZE_T_CLEAN
+ #include "Python.h"
+ #include "structmember.h"
++#include "aligned_alloc.h"
+ 
+ #define NPY_NO_DEPRECATED_API NPY_API_VERSION
+ #define _MULTIARRAYMODULE
+@@ -29,6 +30,7 @@
+ 
+ #include "shape.h"
+ #include "lowlevel_strided_loops.h"
++#include "mkl_cpy.h"
+ #include "alloc.h"
+ 
+ #define NPY_LOWLEVEL_BUFFER_BLOCKSIZE  128
+diff --git a/numpy/core/src/multiarray/einsum.c.src b/numpy/core/src/multiarray/einsum.c.src
+index 943b8aecf..3af37438d 100644
+--- a/numpy/core/src/multiarray/einsum.c.src
++++ b/numpy/core/src/multiarray/einsum.c.src
+@@ -47,6 +47,8 @@
+ #include <emmintrin.h>
+ #endif
+ 
++#include "mkl_cpy.h"
++
+ #define EINSUM_IS_SSE_ALIGNED(x) ((((npy_intp)x)&0xf) == 0)
+ 
+ /********** PRINTF DEBUG TRACING **************/
+diff --git a/numpy/core/src/multiarray/flagsobject.c b/numpy/core/src/multiarray/flagsobject.c
+index af4a17def..77acbbaec 100644
+--- a/numpy/core/src/multiarray/flagsobject.c
++++ b/numpy/core/src/multiarray/flagsobject.c
+@@ -14,6 +14,7 @@
+ #include "npy_pycompat.h"
+ 
+ #include "common.h"
++#include "mkl_cpy.h"
+ 
+ static void
+ _UpdateContiguousFlags(PyArrayObject *ap);
+diff --git a/numpy/core/src/multiarray/getset.c b/numpy/core/src/multiarray/getset.c
+index 825363f19..81cf40c9b 100644
+--- a/numpy/core/src/multiarray/getset.c
++++ b/numpy/core/src/multiarray/getset.c
+@@ -6,6 +6,7 @@
+ 
+ #define NPY_NO_DEPRECATED_API NPY_API_VERSION
+ #define _MULTIARRAYMODULE
++#include "aligned_alloc.h"
+ #include "numpy/arrayobject.h"
+ 
+ #include "npy_config.h"
+@@ -18,6 +19,7 @@
+ #include "getset.h"
+ #include "arrayobject.h"
+ #include "mem_overlap.h"
++#include "mkl_cpy.h"
+ #include "alloc.h"
+ 
+ /*******************  array attribute get and set routines ******************/
+diff --git a/numpy/core/src/multiarray/item_selection.c b/numpy/core/src/multiarray/item_selection.c
+index 486eb43ce..12cf471da 100644
+--- a/numpy/core/src/multiarray/item_selection.c
++++ b/numpy/core/src/multiarray/item_selection.c
+@@ -4,6 +4,7 @@
+ 
+ #define NPY_NO_DEPRECATED_API NPY_API_VERSION
+ #define _MULTIARRAYMODULE
++#include "aligned_alloc.h"
+ #include "numpy/arrayobject.h"
+ #include "numpy/arrayscalars.h"
+ 
+@@ -23,6 +24,7 @@
+ #include "npy_sort.h"
+ #include "npy_partition.h"
+ #include "npy_binsearch.h"
++#include "mkl_cpy.h"
+ #include "alloc.h"
+ 
+ /*NUMPY_API
+diff --git a/numpy/core/src/multiarray/iterators.c b/numpy/core/src/multiarray/iterators.c
+index 9cd5f036c..adcabba51 100644
+--- a/numpy/core/src/multiarray/iterators.c
++++ b/numpy/core/src/multiarray/iterators.c
+@@ -4,6 +4,7 @@
+ 
+ #define NPY_NO_DEPRECATED_API NPY_API_VERSION
+ #define _MULTIARRAYMODULE
++#include "aligned_alloc.h"
+ #include "numpy/arrayobject.h"
+ #include "numpy/arrayscalars.h"
+ 
+@@ -15,6 +16,7 @@
+ #include "iterators.h"
+ #include "ctors.h"
+ #include "common.h"
++#include "mkl_cpy.h"
+ 
+ #define NEWAXIS_INDEX -1
+ #define ELLIPSIS_INDEX -2
+diff --git a/numpy/core/src/multiarray/lowlevel_strided_loops.c.src b/numpy/core/src/multiarray/lowlevel_strided_loops.c.src
+index 397aaf209..aad02c026 100644
+--- a/numpy/core/src/multiarray/lowlevel_strided_loops.c.src
++++ b/numpy/core/src/multiarray/lowlevel_strided_loops.c.src
+@@ -17,6 +17,7 @@
+ #include <numpy/arrayobject.h>
+ #include <numpy/npy_cpu.h>
+ #include <numpy/halffloat.h>
++#include "mkl_cpy.h"
+ 
+ #include "lowlevel_strided_loops.h"
+ 
+diff --git a/numpy/core/src/multiarray/mapping.c b/numpy/core/src/multiarray/mapping.c
+index 18fa7b986..a38055636 100644
+--- a/numpy/core/src/multiarray/mapping.c
++++ b/numpy/core/src/multiarray/mapping.c
+@@ -1,6 +1,7 @@
+ #define PY_SSIZE_T_CLEAN
+ #include <Python.h>
+ #include "structmember.h"
++#include "aligned_alloc.h"
+ 
+ /*#include <stdio.h>*/
+ #define NPY_NO_DEPRECATED_API NPY_API_VERSION
+diff --git a/numpy/core/src/multiarray/methods.c b/numpy/core/src/multiarray/methods.c
+index 2c958989f..29d84ac93 100644
+--- a/numpy/core/src/multiarray/methods.c
++++ b/numpy/core/src/multiarray/methods.c
+@@ -23,6 +23,7 @@
+ #include "strfuncs.h"
+ 
+ #include "methods.h"
++#include "mkl_cpy.h"
+ #include "alloc.h"
+ 
+ 
+diff --git a/numpy/core/src/multiarray/multiarraymodule.c b/numpy/core/src/multiarray/multiarraymodule.c
+index 8e7352e4f..059a98955 100644
+--- a/numpy/core/src/multiarray/multiarraymodule.c
++++ b/numpy/core/src/multiarray/multiarraymodule.c
+@@ -17,6 +17,7 @@
+ #define PY_SSIZE_T_CLEAN
+ #include "Python.h"
+ #include "structmember.h"
++#include "aligned_alloc.h"
+ 
+ #define NPY_NO_DEPRECATED_API NPY_API_VERSION
+ #define _MULTIARRAYMODULE
+diff --git a/numpy/core/src/multiarray/nditer_api.c b/numpy/core/src/multiarray/nditer_api.c
+index f2bc23715..568fe85f3 100644
+--- a/numpy/core/src/multiarray/nditer_api.c
++++ b/numpy/core/src/multiarray/nditer_api.c
+@@ -13,8 +13,10 @@
+ 
+ /* Indicate that this .c file is allowed to include the header */
+ #define NPY_ITERATOR_IMPLEMENTATION_CODE
++#include "aligned_alloc.h"
+ #include "nditer_impl.h"
+ #include "templ_common.h"
++#include "mkl_cpy.h"
+ 
+ /* Internal helper functions private to this file */
+ static npy_intp
+diff --git a/numpy/core/src/multiarray/nditer_constr.c b/numpy/core/src/multiarray/nditer_constr.c
+index b74aca01c..cc10b31aa 100644
+--- a/numpy/core/src/multiarray/nditer_constr.c
++++ b/numpy/core/src/multiarray/nditer_constr.c
+@@ -13,11 +13,13 @@
+ 
+ /* Indicate that this .c file is allowed to include the header */
+ #define NPY_ITERATOR_IMPLEMENTATION_CODE
++#include "aligned_alloc.h"
+ #include "nditer_impl.h"
+ 
+ #include "arrayobject.h"
+ #include "templ_common.h"
+ #include "mem_overlap.h"
++#include "mkl_cpy.h"
+ 
+ 
+ /* Internal helper functions private to this file */
+diff --git a/numpy/core/src/multiarray/nditer_templ.c.src b/numpy/core/src/multiarray/nditer_templ.c.src
+index 0f0d59972..e143fd6cc 100644
+--- a/numpy/core/src/multiarray/nditer_templ.c.src
++++ b/numpy/core/src/multiarray/nditer_templ.c.src
+@@ -11,6 +11,7 @@
+ /* Indicate that this .c file is allowed to include the header */
+ #define NPY_ITERATOR_IMPLEMENTATION_CODE
+ #include "nditer_impl.h"
++#include "mkl_cpy.h"
+ 
+ /* SPECIALIZED iternext functions that handle the non-buffering part */
+ 
+diff --git a/numpy/core/src/multiarray/numpyos.c b/numpy/core/src/multiarray/numpyos.c
+index e6f414786..aef8958fb 100644
+--- a/numpy/core/src/multiarray/numpyos.c
++++ b/numpy/core/src/multiarray/numpyos.c
+@@ -25,6 +25,7 @@
+ #endif
+ 
+ 
++#include "mkl_cpy.h"
+ 
+ /*
+  * From the C99 standard, section 7.19.6: The exponent always contains at least
+diff --git a/numpy/core/src/multiarray/scalarapi.c b/numpy/core/src/multiarray/scalarapi.c
+index 1941f849f..f299c415a 100644
+--- a/numpy/core/src/multiarray/scalarapi.c
++++ b/numpy/core/src/multiarray/scalarapi.c
+@@ -18,6 +18,7 @@
+ #include "scalartypes.h"
+ 
+ #include "common.h"
++#include "mkl_cpy.h"
+ 
+ static PyArray_Descr *
+ _descr_from_subtype(PyObject *type)
+diff --git a/numpy/core/src/multiarray/scalartypes.c.src b/numpy/core/src/multiarray/scalartypes.c.src
+index f1329e066..245e5ccdb 100644
+--- a/numpy/core/src/multiarray/scalartypes.c.src
++++ b/numpy/core/src/multiarray/scalartypes.c.src
+@@ -8,6 +8,7 @@
+ #define _MULTIARRAYMODULE
+ #endif
+ 
++#include "aligned_alloc.h"
+ #include "numpy/arrayobject.h"
+ #include "numpy/npy_math.h"
+ #include "numpy/halffloat.h"
+@@ -30,6 +31,7 @@
+ #include "npy_longdouble.h"
+ 
+ #include <stdlib.h>
++#include "mkl_cpy.h"
+ 
+ #include "binop_override.h"
+ 
+diff --git a/numpy/core/src/multiarray/sequence.c b/numpy/core/src/multiarray/sequence.c
+index 4769bdad9..e5415e34b 100644
+--- a/numpy/core/src/multiarray/sequence.c
++++ b/numpy/core/src/multiarray/sequence.c
+@@ -16,6 +16,7 @@
+ 
+ #include "sequence.h"
+ #include "calculation.h"
++#include "mkl_cpy.h"
+ 
+ /*************************************************************************
+  ****************   Implement Sequence Protocol **************************
+diff --git a/numpy/core/src/multiarray/shape.c b/numpy/core/src/multiarray/shape.c
+index 40925d8b9..dc2203128 100644
+--- a/numpy/core/src/multiarray/shape.c
++++ b/numpy/core/src/multiarray/shape.c
+@@ -16,6 +16,7 @@
+ #include "ctors.h"
+ 
+ #include "shape.h"
++#include "mkl_cpy.h"
+ 
+ #include "templ_common.h" /* for npy_mul_with_overflow_intp */
+ #include "common.h" /* for convert_shape_to_string */
+diff --git a/numpy/core/src/multiarray/ucsnarrow.c b/numpy/core/src/multiarray/ucsnarrow.c
+index 8e293e9f2..0d902b985 100644
+--- a/numpy/core/src/multiarray/ucsnarrow.c
++++ b/numpy/core/src/multiarray/ucsnarrow.c
+@@ -14,6 +14,7 @@
+ 
+ #include "npy_pycompat.h"
+ #include "ctors.h"
++#include "mkl_cpy.h"
+ 
+ /*
+  * Functions only needed on narrow builds of Python for converting back and
+diff --git a/numpy/core/src/npysort/npysort_common.h b/numpy/core/src/npysort/npysort_common.h
+index a22045b41..17c649a95 100644
+--- a/numpy/core/src/npysort/npysort_common.h
++++ b/numpy/core/src/npysort/npysort_common.h
+@@ -3,6 +3,7 @@
+ 
+ #include <stdlib.h>
+ #include <numpy/ndarraytypes.h>
++#include "mkl_cpy.h"
+ 
+ /*
+  *****************************************************************************
+diff --git a/numpy/core/src/umath/reduction.c b/numpy/core/src/umath/reduction.c
+index 04f5cc1d3..9a0c6954a 100644
+--- a/numpy/core/src/umath/reduction.c
++++ b/numpy/core/src/umath/reduction.c
+@@ -25,6 +25,7 @@
+ #include "lowlevel_strided_loops.h"
+ #include "reduction.h"
+ #include "extobj.h"  /* for _check_ufunc_fperr */
++#include "mkl_cpy.h"
+ 
+ /*
+  * Allocates a result array for a reduction operation, with
+diff --git a/numpy/core/src/umath/simd.inc.src b/numpy/core/src/umath/simd.inc.src
+index 8a799fe61..26eb07dfd 100644
+--- a/numpy/core/src/umath/simd.inc.src
++++ b/numpy/core/src/umath/simd.inc.src
+@@ -27,6 +27,7 @@
+ #include <stdlib.h>
+ #include <float.h>
+ #include <string.h> /* for memcpy */
++#include "mkl_cpy.h"
+ 
+ /* Figure out the right abs function for pointer addresses */
+ static NPY_INLINE npy_intp
+diff --git a/numpy/core/src/umath/test_rational.c.src b/numpy/core/src/umath/test_rational.c.src
+index 26c3d3799..3bffd002c 100644
+--- a/numpy/core/src/umath/test_rational.c.src
++++ b/numpy/core/src/umath/test_rational.c.src
+@@ -8,6 +8,7 @@
+ #include <numpy/ufuncobject.h>
+ #include <numpy/npy_3kcompat.h>
+ #include <math.h>
++#include "mkl_cpy.h"
+ 
+ #include "common.h"  /* for error_converting */
+ 
+diff --git a/numpy/core/src/umath/ufunc_object.c b/numpy/core/src/umath/ufunc_object.c
+index 35c7724b1..9bd0769a1 100644
+--- a/numpy/core/src/umath/ufunc_object.c
++++ b/numpy/core/src/umath/ufunc_object.c
+@@ -27,6 +27,7 @@
+ #define NPY_NO_DEPRECATED_API NPY_API_VERSION
+ 
+ #include "Python.h"
++#include "aligned_alloc.h"
+ 
+ #include "npy_config.h"
+ 
+@@ -48,6 +49,7 @@
+ #include "npy_import.h"
+ #include "extobj.h"
+ #include "common.h"
++#include "mkl_cpy.h"
+ 
+ /********** PRINTF DEBUG TRACING **************/
+ #define NPY_UF_DBG_TRACING 0
+diff --git a/numpy/core/src/umath/ufunc_type_resolution.c b/numpy/core/src/umath/ufunc_type_resolution.c
+index 1766ba564..2ad0fb213 100644
+--- a/numpy/core/src/umath/ufunc_type_resolution.c
++++ b/numpy/core/src/umath/ufunc_type_resolution.c
+@@ -12,6 +12,7 @@
+ #define NPY_NO_DEPRECATED_API NPY_API_VERSION
+ 
+ #include "Python.h"
++#include "aligned_alloc.h"
+ 
+ #include "npy_config.h"
+ #define PY_ARRAY_UNIQUE_SYMBOL _npy_umathmodule_ARRAY_API
+@@ -23,6 +24,7 @@
+ #include "ufunc_type_resolution.h"
+ #include "ufunc_object.h"
+ #include "common.h"
++#include "mkl_cpy.h"
+ 
+ static const char *
+ npy_casting_to_string(NPY_CASTING casting)
+diff --git a/numpy/core/src/umath/umathmodule.c b/numpy/core/src/umath/umathmodule.c
+index 1a6cee030..58589a116 100644
+--- a/numpy/core/src/umath/umathmodule.c
++++ b/numpy/core/src/umath/umathmodule.c
+@@ -20,6 +20,7 @@
+ 
+ #include "Python.h"
+ 
++#include "aligned_alloc.h"
+ #include "npy_config.h"
+ #define PY_ARRAY_UNIQUE_SYMBOL _npy_umathmodule_ARRAY_API
+ 
+@@ -308,6 +309,7 @@ static struct PyModuleDef moduledef = {
+ #endif
+ 
+ #include <stdio.h>
++#include "mkl_cpy.h"
+ 
+ #if defined(NPY_PY3K)
+ #define RETVAL m
+diff --git a/numpy/core/tests/test_regression.py b/numpy/core/tests/test_regression.py
+index b875fb583..8ee6c9d5b 100644
+--- a/numpy/core/tests/test_regression.py
++++ b/numpy/core/tests/test_regression.py
+@@ -1300,6 +1300,17 @@ class TestRegression(object):
+         except Exception as e:
+             self.fail("Got exception of type %s instead of ValueError" % type(e))
+ 
++    @dec.skipif(True)
++    def test_huge_array_copy(self):
++        #check behavior of altered memcpy/memmove when size of array > 2**sizeof(int)
++        try:
++            arr1 = np.ones([715827883, 3], np.double)
++            arr2 = np.copy(arr1)
++            assert_equal(arr1, arr2)
++        except MemoryError as e:
++            #if cannot allocate memory, let the test pass
++            pass
++
+     def test_fromiter_bytes(self):
+         # Ticket #1058
+         a = np.fromiter(list(range(10)), dtype='b')
+diff --git a/numpy/random/setup.py b/numpy/random/setup.py
+index 3f3b773a4..5276e8a94 100644
+--- a/numpy/random/setup.py
++++ b/numpy/random/setup.py
+@@ -5,6 +5,7 @@ import os
+ import sys
+ from distutils.dep_util import newer
+ from distutils.msvccompiler import get_build_version as get_msvc_build_version
++from numpy.distutils.system_info import get_info
+ 
+ def needs_mingw_ftime_workaround():
+     # We need the mingw workaround for _ftime if the msvc runtime version is
+@@ -40,7 +41,7 @@ def configuration(parent_package='',top_path=None):
+     if needs_mingw_ftime_workaround():
+         defs.append(("NPY_NEEDS_MINGW_TIME_WORKAROUND", None))
+ 
+-    libs = []
++    libs = ['mkl_cp']
+     # Configure mtrand
+     config.add_extension('mtrand',
+                          sources=[join('mtrand', x) for x in
+@@ -51,6 +52,7 @@ def configuration(parent_package='',top_path=None):
+                                   join('mtrand', '*.pyx'),
+                                   join('mtrand', '*.pxi'),],
+                          define_macros=defs,
++                         extra_info=get_info('mkl')
+                          )
+ 
+     config.add_data_files(('.', join('mtrand', 'randomkit.h')))
