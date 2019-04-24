@@ -1095,7 +1095,7 @@ index a46cbbbf36..24af30cb5f 100644
              np.arange(sz)
              assert_(np.size == sz)
  
-+    @dec.skipif(True, reason="Memory hog. Skip to save infrastructure resources")
++    @dec.slow
 +    def test_huge_array_copy(self):
 +        #check behavior of altered memcpy/memmove when size of array > 2**sizeof(int)
 +        try:

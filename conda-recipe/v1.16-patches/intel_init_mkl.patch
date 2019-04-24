@@ -16,4 +16,4 @@ index d893ba3771..7e172df884 100644
 +        "initialization ensuring its correct out-of-the box operation under "
 +        "condition when Gnu OpenMP had already been loaded by Python process "
 +        "is not assured. Please install mkl-service package, see "
-+        "http://github.com/IntelPython/mkl-service")
++        "http://github.com/IntelPython/mkl-service", stacklevel=2)

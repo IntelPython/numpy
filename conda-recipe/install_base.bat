@@ -1,7 +1,6 @@
 
-call activate_compiler.bat
+call %RECIPE_DIR%\activate_compiler.bat
 if errorlevel 1 exit 1
-
 set CC=icl
 set LD=xilink
 

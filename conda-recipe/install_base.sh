@@ -24,6 +24,7 @@ if [ `uname` == Darwin ]; then
     sed -i -e 's/lapack_libs =.*/lapack_libs = mkl_rt/g' site.cfg
     export MACOSX_DEPLOYMENT_TARGET=10.10
 else
+    # source /localdisk/tools/intel/compilers_and_libraries_16.0.3/linux/bin/compilervars.sh intel64
     sed -i 's,libs =.*,libs = mkl_rt,g' site.cfg
 fi
 
