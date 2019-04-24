@@ -1,5 +1,6 @@
-rem Example of activating Intel (R) Compiler on Windows
+rem Example of activating Intel(R) Compiler on Windows
 rem Adjust the path as necessary
+
 
 if %PY_VER%==2.7 (
     set VS=vs2008

@@ -221,7 +221,7 @@ index 3b9ca72464..a46cbbbf36 100644
          assert_((xp.__array_interface__['data'][0] !=
                  xpd.__array_interface__['data'][0]))
  
-+    @dec.skipif(sys.platform == "win32", reason="Memory hog, skip on machines with low memory")
++    @dec.slow
 +    def test_astype_largearray(self):
 +        intp_size = np.dtype(np.intp).itemsize
 +        if intp_size == 8:

@@ -1,6 +1,14 @@
+import sys
+
+IS_WIN = True if sys.platform.startswith('win') else False
+
 CONFIG = {
     'framework' : 'other',
-    'arg' : 'PYCMD -c "from numpy import test; test({}, verbose=2)"'.format("'full'"),
+    'arg' : 'PYCMD -c "from numpy import test; test(label={label}, verbose=2, extra_argv={extra_argv})"'.format(
+          label="'fast'" if IS_WIN else "'full'", # skip slow tests on Windows
+	  # see https://github.com/numpy/numpy/issues/13387
+	  extra_argv=["--deselect", "numpy\\distutils\\tests\\test_system_info.py"] if IS_WIN else []
+       ),
     'env' : None,
     'expect_except' : None,
     'need_sources' : False,
@@ -9,33 +17,28 @@ CONFIG = {
     'parser' : 'pytest',
     'errors' : {
         '2.7' : {
-            'Win' : {'test_astype_largearray (test_regression.TestRegression)', # SAT-1168
-                     'test_poly (test_polynomial.TestDocs)'},
+            'Win' : set(),
             'Lin' : set(),
             'Mac' : set()
         },
         '3.5' : {
-            'Win' : {'test_astype_largearray (test_regression.TestRegression)'},  # SAT-1168
+            'Win' : set(),
             'Lin' : set(),
             'Mac' : set()
         },
         '3.6' : {
             'Win' : set(),
             'Lin' : set(),
-            'Mac' : {'numpy.f2py.tests.test_return_real.TestCReturnReal.test_all'}
+            'Mac' : set()
         }
     },
     'failures' : {
         '2.7' : {
-            'Win' : {'test_inplace_division_array_type (test_core.TestMaskedArrayInPlaceArithmetics)',
-                     'test_mem_overlap.TestUFunc.test_unary_ufunc_1d_manual',
-                     'test_special (test_umath.TestLog1p)',
-                     'test_special (test_umath.TestExpm1)',
-                     },
+            'Win' : set(),
             'Lin' : {'TestKind.test_all'},
             'Mac' : {'TestKind.test_all',
-                     'test_special (test_umath.TestLog1p)',
-                     'test_special (test_umath.TestExpm1)',
+                     #'test_special (test_umath.TestLog1p)',
+                     #'test_special (test_umath.TestExpm1)',
                     },
         },
         '3.5' : {
@@ -45,13 +48,13 @@ CONFIG = {
         },
         '3.6' : {
             'Win' : {
-                     'test_special (test_umath.TestLog1p)',
-                     'test_special (test_umath.TestExpm1)',
+                     # 'test_special (test_umath.TestLog1p)',
+                     # 'test_special (test_umath.TestExpm1)',
                     },
             'Lin' : {'TestKind.test_all'},
             'Mac' : {'TestKind.test_all',
-                     'test_special (test_umath.TestLog1p)',
-                     'test_special (test_umath.TestExpm1)',
+                     # 'test_special (test_umath.TestLog1p)',
+                     # 'test_special (test_umath.TestExpm1)',
                      },
         },
     },
