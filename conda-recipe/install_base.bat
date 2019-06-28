@@ -4,8 +4,11 @@ if errorlevel 1 exit 1
 set CC=icl
 set LD=xilink
 
+echo "Executing %PYTHON% %RECIPE_DIR%\cio_files\mkl_version.py numpy\__init__.py"
 %PYTHON% %RECIPE_DIR%\cio_files\mkl_version.py numpy\__init__.py
 if errorlevel 1 exit 1
+
+echo "... done"
 
 copy %RECIPE_DIR%\cio_files\numpy\site-mkl-%SUBDIR%.cfg site.cfg
 if errorlevel 1 exit 1

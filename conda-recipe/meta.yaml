@@ -1,5 +1,5 @@
-{% set version = "1.16.3" %}
-{% set buildnumber = 0 %}
+{% set version = "1.16.4" %}
+{% set buildnumber = 3 %}
 {% set major = '.'.join(version.split('.')[0:2]) %}
 
 ### If you change the iccver here, you must also set the path correctly in build.sh / bld.bat!!!
@@ -44,6 +44,8 @@ outputs:
              - setuptools
              - mkl-devel >=2019.0.0 [not nomkl]
              - wheel
+             - intel-libpatch   # [linux]
+             - mkl-service >=2.1.0 [not nomkl]
           run:
              - python
              - icc_rt >={{iccver}}
@@ -84,6 +86,7 @@ outputs:
               - mkl_fft  [not nomkl]
               - mkl_random [not nomkl]
               - mkl-service >=2.0.1 [not nomkl]
+
 
       test:
           files:

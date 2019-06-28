@@ -34,5 +34,8 @@ if [ ! -f site.cfg ]; then
 fi
 
 CFLAGS="-DNDEBUG -I$PREFIX/include $CFLAGS" $PYTHON setup.py config_cc --compiler=intelem config_fc --fcompiler=intelem build --force install --old-and-unmanageable
+if [ `uname` == Linux ]; then
+    intel-libpatch.sh
+fi
 $PYTHON setup.py bdist_wheel
 cp dist/numpy*.whl ../../
