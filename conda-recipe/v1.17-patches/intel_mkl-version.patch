@@ -1,0 +1,13 @@
+diff --git a/numpy/__init__.py b/numpy/__init__.py
+index ba88c733f4..3723daaf7d 100644
+--- a/numpy/__init__.py
++++ b/numpy/__init__.py
+@@ -192,6 +192,8 @@ else:
+     del PytestTester
+ 
+ 
++    __mkl_version__ = "__MKL_VERSION__"
++
+     def _sanity_check():
+         """
+         Quick sanity checks for common bugs caused by environment.
