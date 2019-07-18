@@ -1,0 +1,56 @@
+diff --git a/numpy/random_intel/__init__.py b/numpy/random_intel/__init__.py
+new file mode 100644
+index 000000000..3bcf8f813
+--- /dev/null
++++ b/numpy/random_intel/__init__.py
+@@ -0,0 +1,7 @@
++import warnings
++try:
++    with warnings.catch_warnings():
++        warnings.filterwarnings("ignore", message="numpy.ndarray size changed")
++        from mkl_random import *
++except ImportError as e:
++    warnings.warn("mkl_random not found. Install it with 'conda instal -c intel mkl_random', or get it from 'http://github.com/IntelPython/mkl_random'", stacklevel=2)
+diff --git a/numpy/random_intel/setup.py b/numpy/random_intel/setup.py
+new file mode 100644
+index 000000000..6d4fecf29
+--- /dev/null
++++ b/numpy/random_intel/setup.py
+@@ -0,0 +1,10 @@
++from __future__ import division, print_function
++
++def configuration(parent_package='',top_path=None):
++    from numpy.distutils.misc_util import Configuration
++    config = Configuration('random_intel', parent_package, top_path)
++    return config
++
++if __name__ == '__main__':
++    from numpy.distutils.core import setup
++    setup(configuration=configuration)
+diff --git a/numpy/setup.py b/numpy/setup.py
+old mode 100644
+new mode 100755
+index 4ccdaeea5..d794e92d0
+--- a/numpy/setup.py
++++ b/numpy/setup.py
+@@ -29,6 +29,7 @@ def configuration(parent_package='',top_path=None):
+     config.add_subpackage('matrixlib')
+     config.add_subpackage('polynomial')
+     config.add_subpackage('random')
++    config.add_subpackage('random_intel')
+     config.add_subpackage('testing')
+     config.add_data_dir('doc')
+     config.add_data_dir('tests')
+diff --git a/numpy/tests/test_warnings.py b/numpy/tests/test_warnings.py
+index 7f22794ec..5bf220086 100644
+--- a/numpy/tests/test_warnings.py
++++ b/numpy/tests/test_warnings.py
+@@ -73,6 +73,8 @@ if sys.version_info >= (3, 4):
+                 continue
+             if path == base / "random" / "__init__.py":
+                 continue
++            if path == base / "random_intel" / "__init__.py":
++                continue
+             # use tokenize to auto-detect encoding on systems where no
+             # default encoding is defined (e.g. LANG='C')
+             with tokenize.open(str(path)) as file:
