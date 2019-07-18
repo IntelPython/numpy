@@ -2678,7 +2678,7 @@ NPY_NO_EXPORT void
 		    if( DISJOINT_OR_SAME(op1_shifted, ip1_aligned, j_max, 1) &&
 			DISJOINT_OR_SAME(op1_shifted, ip2_shifted, j_max, 1) ) {
 			__assume_aligned(ip1_aligned, 64);
-			_Pragma("simd")
+			_Pragma("vector")
 			for(j = 0; j < j_max; j++) {
 			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
 			}
@@ -2846,7 +2846,7 @@ NPY_NO_EXPORT void
 		    if( DISJOINT_OR_SAME(op1_shifted, ip1_aligned, j_max, 1) &&
 			DISJOINT_OR_SAME(op1_shifted, ip2_shifted, j_max, 1) ) {
 			__assume_aligned(ip1_aligned, 64);
-			_Pragma("simd")
+			_Pragma("vector")
 			for(j = 0; j < j_max; j++) {
 			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
 			}
@@ -3014,7 +3014,7 @@ NPY_NO_EXPORT void
 		    if( DISJOINT_OR_SAME(op1_shifted, ip1_aligned, j_max, 1) &&
 			DISJOINT_OR_SAME(op1_shifted, ip2_shifted, j_max, 1) ) {
 			__assume_aligned(ip1_aligned, 64);
-			_Pragma("simd")
+			_Pragma("vector")
 			for(j = 0; j < j_max; j++) {
 			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
 			}
@@ -3175,13 +3175,15 @@ NPY_NO_EXPORT void
 
             {
                 npy_intp j, j_max = blocked_end - peel;
+		j_max &= (~0xf);
+		const npy_intp blocked_end = j_max + peel;
                 if (j_max > 0) {
                     @type@ *ip1_aligned = ip1 + peel, *op1_shifted = op1 + peel, *ip2_shifted = ip2 + peel;
 
 		    if( DISJOINT_OR_SAME(op1_shifted, ip1_aligned, j_max, 1) &&
 			DISJOINT_OR_SAME(op1_shifted, ip2_shifted, j_max, 1) ) {
 			__assume_aligned(ip1_aligned, 64);
-			_Pragma("simd")
+			_Pragma("vector")
 			for(j = 0; j < j_max; j++) {
 			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
 			}
