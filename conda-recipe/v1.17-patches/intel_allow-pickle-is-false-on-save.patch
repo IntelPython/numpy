@@ -1,0 +1,68 @@
+diff --git a/numpy/lib/format.py b/numpy/lib/format.py
+index 93bdbce976..58840f14e3 100644
+--- a/numpy/lib/format.py
++++ b/numpy/lib/format.py
+@@ -603,7 +603,7 @@ def _read_array_header(fp, version):
+ 
+     return d['shape'], d['fortran_order'], dtype
+ 
+-def write_array(fp, array, version=None, allow_pickle=True, pickle_kwargs=None):
++def write_array(fp, array, version=None, allow_pickle=False, pickle_kwargs=None):
+     """
+     Write an array to an NPY file, including a header.
+ 
+@@ -622,7 +622,7 @@ def write_array(fp, array, version=None, allow_pickle=True, pickle_kwargs=None):
+         The version number of the format. None means use the oldest
+         supported version that is able to store the data.  Default: None
+     allow_pickle : bool, optional
+-        Whether to allow writing pickled data. Default: True
++        Whether to allow writing pickled data. Default: False
+     pickle_kwargs : dict, optional
+         Additional keyword arguments to pass to pickle.dump, excluding
+         'protocol'. These are only useful when pickling objects in object
+diff --git a/numpy/lib/tests/test_format.py b/numpy/lib/tests/test_format.py
+index 062c21725e..c96ae3ec18 100644
+--- a/numpy/lib/tests/test_format.py
++++ b/numpy/lib/tests/test_format.py
+@@ -426,7 +426,7 @@ class BytesIOSRandomSize(BytesIO):
+ 
+ def roundtrip(arr):
+     f = BytesIO()
+-    format.write_array(f, arr)
++    format.write_array(f, arr, allow_pickle=True)
+     f2 = BytesIO(f.getvalue())
+     arr2 = format.read_array(f2, allow_pickle=True)
+     return arr2
+diff --git a/numpy/lib/tests/test_io.py b/numpy/lib/tests/test_io.py
+index 38d4c19fac..92445135b9 100644
+--- a/numpy/lib/tests/test_io.py
++++ b/numpy/lib/tests/test_io.py
+@@ -179,7 +179,14 @@ class RoundtripTest(object):
+ 
+ class TestSaveLoad(RoundtripTest):
+     def roundtrip(self, *args, **kwargs):
+-        RoundtripTest.roundtrip(self, np.save, *args, **kwargs)
++        load_kwds = kwargs.get('load_kwds', {})
++        load_kwds['allow_pickle'] = load_kwds.get('allow_pickle', True)
++        save_kwds = kwargs.get('save_kwds', {})
++        save_kwds['allow_pickle'] = save_kwds.get('allow_pickle', True)
++        kwargs_copy = kwargs
++        kwargs_copy['load_kwds'] = load_kwds
++        kwargs_copy['save_kwds'] = save_kwds
++        RoundtripTest.roundtrip(self, np.save, *args, **kwargs_copy)
+         assert_equal(self.arr[0], self.arr_reloaded)
+         assert_equal(self.arr[0].dtype, self.arr_reloaded.dtype)
+         assert_equal(self.arr[0].flags.fnc, self.arr_reloaded.flags.fnc)
+@@ -187,7 +194,11 @@ class TestSaveLoad(RoundtripTest):
+ 
+ class TestSavezLoad(RoundtripTest):
+     def roundtrip(self, *args, **kwargs):
+-        RoundtripTest.roundtrip(self, np.savez, *args, **kwargs)
++        load_kwds = kwargs.get('load_kwds', {})
++        load_kwds['allow_pickle'] = load_kwds.get('allow_pickle', True)
++        kwargs_copy = kwargs
++        kwargs_copy['load_kwds'] = load_kwds
++        RoundtripTest.roundtrip(self, np.savez, *args, **kwargs_copy)
+         try:
+             for n, arr in enumerate(self.arr):
+                 reloaded = self.arr_reloaded['arr_%d' % n]
