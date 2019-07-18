@@ -1,0 +1,38 @@
+diff --git a/numpy/random_intel/__init__.py b/numpy/random_intel/__init__.py
+new file mode 100644
+index 000000000..111e52b31
+--- /dev/null
++++ b/numpy/random_intel/__init__.py
+@@ -0,0 +1,4 @@
++try:
++    from mkl_random import *
++except ImportError as e:
++    raise ImportError("mkl_random not found. Install it with 'conda instal -c intel mkl_random', or get it from 'http://github.com/IntelPython/mkl_random'")
+diff --git a/numpy/random_intel/setup.py b/numpy/random_intel/setup.py
+new file mode 100644
+index 000000000..6d4fecf29
+--- /dev/null
++++ b/numpy/random_intel/setup.py
+@@ -0,0 +1,10 @@
++from __future__ import division, print_function
++
++def configuration(parent_package='',top_path=None):
++    from numpy.distutils.misc_util import Configuration
++    config = Configuration('random_intel', parent_package, top_path)
++    return config
++
++if __name__ == '__main__':
++    from numpy.distutils.core import setup
++    setup(configuration=configuration)
+diff --git a/numpy/setup.py b/numpy/setup.py
+index 9779ada03..31af20ec3 100755
+--- a/numpy/setup.py
++++ b/numpy/setup.py
+@@ -18,6 +18,7 @@ def configuration(parent_package='',top_path=None):
+     config.add_subpackage('matrixlib')
+     config.add_subpackage('polynomial')
+     config.add_subpackage('random')
++    config.add_subpackage('random_intel')
+     config.add_subpackage('testing')
+     config.add_data_dir('doc')
+     config.add_data_dir('tests')

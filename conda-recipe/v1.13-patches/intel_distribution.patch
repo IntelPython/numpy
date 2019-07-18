@@ -1,0 +1,630 @@
+diff --git a/numpy/__init__.py b/numpy/__init__.py
+index 4b4f5ce..f6e7860 100644
+--- a/numpy/__init__.py
++++ b/numpy/__init__.py
+@@ -106,6 +106,7 @@ Exceptions to this rule are documented.
+ """
+ from __future__ import division, absolute_import, print_function
+ 
++import os
+ import sys
+ import warnings
+ 
+@@ -122,6 +123,21 @@ except NameError:
+ if __NUMPY_SETUP__:
+     sys.stderr.write('Running from numpy source directory.\n')
+ else:
++    # Add MKL runtimes to the path
++    """Set environment for additional binaries"""
++    if sys.platform == 'win32':
++        def extendkey(key, value):
++            if os.getenv(key) is None:
++                os.environ[key] = value
++            else:
++                os.environ[key] = os.pathsep.join([value] + os.environ[key].split(os.pathsep))
++
++        for redist in ['DLLs']:
++            redist_dir = os.path.join(sys.prefix, redist)
++
++            if os.path.exists(redist_dir):
++                extendkey('PATH', redist_dir)
++
+     try:
+         from numpy.__config__ import show as show_config
+     except ImportError:
+diff --git a/numpy/core/include/numpy/npy_math.h b/numpy/core/include/numpy/npy_math.h
+index ba32bcd..a9aa696 100644
+--- a/numpy/core/include/numpy/npy_math.h
++++ b/numpy/core/include/numpy/npy_math.h
+@@ -165,7 +165,7 @@ double npy_spacing(double x);
+ 
+ /* use builtins to avoid function calls in tight loops
+  * only available if npy_config.h is available (= numpys own build) */
+-#if HAVE___BUILTIN_ISNAN
++#if HAVE___BUILTIN_ISNAN && !defined(NPY_BROKEN_INF_NAN_BUILTINS)
+     #define npy_isnan(x) __builtin_isnan(x)
+ #else
+     #ifndef NPY_HAVE_DECL_ISNAN
+@@ -181,7 +181,7 @@ double npy_spacing(double x);
+ 
+ 
+ /* only available if npy_config.h is available (= numpys own build) */
+-#if HAVE___BUILTIN_ISFINITE
++#if HAVE___BUILTIN_ISFINITE && !defined(NPY_BROKEN_INF_NAN_BUILTINS)
+     #define npy_isfinite(x) __builtin_isfinite(x)
+ #else
+     #ifndef NPY_HAVE_DECL_ISFINITE
+@@ -196,7 +196,7 @@ double npy_spacing(double x);
+ #endif
+ 
+ /* only available if npy_config.h is available (= numpys own build) */
+-#if HAVE___BUILTIN_ISINF
++#if HAVE___BUILTIN_ISINF && !defined(NPY_BROKEN_INF_NAN_BUILTINS)
+     #define npy_isinf(x) __builtin_isinf(x)
+ #else
+     #ifndef NPY_HAVE_DECL_ISINF
+@@ -218,8 +218,10 @@ double npy_spacing(double x);
+         (sizeof (x) == sizeof (long double) ? _npy_signbit_ld (x) \
+          : sizeof (x) == sizeof (double) ? _npy_signbit_d (x) \
+          : _npy_signbit_f (x))
++    #define true_npy_signbit(x) (signbit((x)) != 0 ? 1 : 0)
+ #else
+     #define npy_signbit(x) signbit((x))
++    #define true_npy_signbit(x) (signbit((x)) != 0 ? 1 : 0)
+ #endif
+ 
+ /*
+diff --git a/numpy/core/include/numpy/numpyconfig.h b/numpy/core/include/numpy/numpyconfig.h
+index 7f7ddef..ee1f207 100644
+--- a/numpy/core/include/numpy/numpyconfig.h
++++ b/numpy/core/include/numpy/numpyconfig.h
+@@ -11,6 +11,9 @@
+ #ifdef __APPLE__
+     #undef NPY_SIZEOF_LONG
+     #undef NPY_SIZEOF_PY_INTPTR_T
++    #ifdef __INTEL_COMPILER
++        #define NPY_BROKEN_INF_NAN_BUILTINS
++    #endif
+ 
+     #ifdef __LP64__
+         #define NPY_SIZEOF_LONG         8
+diff --git a/numpy/core/setup.py b/numpy/core/setup.py
+index e057c56..65ef2f8 100644
+--- a/numpy/core/setup.py
++++ b/numpy/core/setup.py
+@@ -177,7 +177,8 @@ def check_math_capabilities(config, moredefs, mathlibs):
+ 
+     # C99 functions: float and long double versions
+     check_funcs(C99_FUNCS_SINGLE)
+-    check_funcs(C99_FUNCS_EXTENDED)
++    if not (config.check_decl("_MSC_VER") and config.check_decl("__INTEL_COMPILER")):
++        check_funcs(C99_FUNCS_EXTENDED)
+ 
+ def check_complex(config, mathlibs):
+     priv = []
+@@ -216,7 +217,8 @@ def check_complex(config, mathlibs):
+ 
+         check_prec('')
+         check_prec('f')
+-        check_prec('l')
++        if not (config.check_decl("_MSC_VER") and config.check_decl("__INTEL_COMPILER")):
++            check_prec('l')
+ 
+     return priv, pub
+ 
+diff --git a/numpy/core/src/npymath/npy_math_complex.c.src b/numpy/core/src/npymath/npy_math_complex.c.src
+index a82a673..c550e8c 100644
+--- a/numpy/core/src/npymath/npy_math_complex.c.src
++++ b/numpy/core/src/npymath/npy_math_complex.c.src
+@@ -503,24 +503,44 @@ npy_cpow@c@ (@ctype@ a, @ctype@ b)
+             return cmul@c@(a, cmul@c@(a, a));
+         }
+         else if (n > -100 && n < 100) {
+-            @ctype@ p, aa;
+-            npy_intp mask = 1;
++#define CIPOW_USE_C99 (defined(__ICC) || defined(__INTEL_COMPILER)) && (@precision@ == 2 || @precision@ == 1)
++#if CIPOW_USE_C99
++#    if @precision@ == 2
++            complex double aa = 1.0, p = ar + I*ai;
++#    else
++            complex float aa = 1.0, p = ar + I*ai;
++#    endif
++#else
++            @ctype@ p = npy_cpack@c@(ar, ai);
++            @ctype@ aa = c_1@c@;
++#endif
+             if (n < 0) {
+                 n = -n;
+             }
+-            aa = c_1@c@;
+-            p = npy_cpack@c@(ar, ai);
+             while (1) {
+-                if (n & mask) {
++                if (n & 1) {
++#if CIPOW_USE_C99
++                    aa *= p;
++#else
+                     aa = cmul@c@(aa,p);
++#endif
+                 }
+-                mask <<= 1;
+-                if (n < mask || mask <= 0) {
++                n >>= 1;
++                if (!n) {
+                     break;
+                 }
++#if CIPOW_USE_C99
++                p *= p;
++#else
+                 p = cmul@c@(p,p);
++#endif
+             }
++#if CIPOW_USE_C99
++            r = npy_cpack@c@(creal(aa), cimag(aa));
++#else
+             r = npy_cpack@c@(npy_creal@c@(aa), npy_cimag@c@(aa));
++#endif
++#undef CIPOW_USE_C99
+             if (br < 0) {
+                 r = cdiv@c@(c_1@c@, r);
+             }
+diff --git a/numpy/core/src/npysort/selection.c.src b/numpy/core/src/npysort/selection.c.src
+index 1e09345..530330b 100644
+--- a/numpy/core/src/npysort/selection.c.src
++++ b/numpy/core/src/npysort/selection.c.src
+@@ -70,6 +70,7 @@ static NPY_INLINE void store_pivot(npy_intp pivot, npy_intp kth,
+  *         npy_ushort, npy_float, npy_double, npy_longdouble, npy_cfloat,
+  *         npy_cdouble, npy_clongdouble#
+  * #inexact = 0*11, 1*7#
++ * #iccnovector = 0, 1*2, 0*15#
+  */
+ 
+ static npy_intp
+@@ -254,6 +255,11 @@ static int
+         npy_intp minidx = i;
+         @type@ minval = v[IDX(i)];
+         npy_intp k;
++#if @iccnovector@
++#if defined(__INTEL_COMPILER) &&( __INTEL_COMPILER < 1700)
++       #pragma novector
++#endif
++#endif
+         for (k = i + 1; k < num; k++) {
+             if (@TYPE@_LT(v[IDX(k)], minval)) {
+                 minidx = k;
+diff --git a/numpy/core/tests/test_regression.py b/numpy/core/tests/test_regression.py
+index fb9ea52..9440ad9 100644
+--- a/numpy/core/tests/test_regression.py
++++ b/numpy/core/tests/test_regression.py
+@@ -1072,6 +1072,14 @@ class TestRegression(TestCase):
+         assert_((xp.__array_interface__['data'][0] !=
+                 xpd.__array_interface__['data'][0]))
+ 
++    @dec.skipif(sys.platform == "win32")
++    def test_astype_largearray(self, level=rlevel):
++        intp_size = np.dtype(np.intp).itemsize
++        if intp_size == 8:
++            x = np.empty((987, 987, 987), dtype=np.float64)
++            # astype causes memmove of size > 2**32. Should not crash
++            y = x.astype(dtype=np.float64)
++
+     def test_compress_small_type(self, level=rlevel):
+         # Ticket #789, changeset 5217.
+         # compress with out argument segfaulted if cannot cast safely
+diff --git a/numpy/distutils/fcompiler/intel.py b/numpy/distutils/fcompiler/intel.py
+index 4dee849..dc5636d 100644
+--- a/numpy/distutils/fcompiler/intel.py
++++ b/numpy/distutils/fcompiler/intel.py
+@@ -1,8 +1,12 @@
+ # http://developer.intel.com/software/products/compilers/flin/
+ from __future__ import division, absolute_import, print_function
+ 
++import re
+ import sys
++import platform
++from os import environ
+ 
++from numpy.distutils.exec_command import exec_command
+ from numpy.distutils.ccompiler import simple_version_match
+ from numpy.distutils.fcompiler import FCompiler, dummy_fortran_file
+ 
+@@ -26,6 +30,17 @@ class BaseIntelFCompiler(FCompiler):
+         return '-Wl,-rpath="%s"' % dir
+ 
+ 
++    def get_version(self):
++        if platform.system() == 'Windows':
++            version_cmd = "icl -dummy"
++            status, output = exec_command(version_cmd, use_tee=0)
++            version = re.search(r'Version\s*([\d.]+)', output).group(1)
++        else:
++            version_cmd = "icc -dumpversion"
++            status, version = exec_command(version_cmd, use_tee=0)
++        return version
++
++
+ class IntelFCompiler(BaseIntelFCompiler):
+ 
+     compiler_type = 'intel'
+@@ -58,7 +73,7 @@ class IntelFCompiler(BaseIntelFCompiler):
+     def get_flags_opt(self):  # Scipy test failures with -O2
+         v = self.get_version()
+         mpopt = 'openmp' if v and v < '15' else 'qopenmp'
+-        return ['-fp-model strict -O1 -{}'.format(mpopt)]
++        return ['-fp-model strict', '-O3', '-' + mpopt]
+ 
+     def get_flags_arch(self):
+         return []
+@@ -124,10 +139,10 @@ class IntelEM64TFCompiler(IntelFCompiler):
+     def get_flags_opt(self):  # Scipy test failures with -O2
+         v = self.get_version()
+         mpopt = 'openmp' if v and v < '15' else 'qopenmp'
+-        return ['-fp-model strict -O1 -{}'.format(mpopt)]
++        return ['-fp-model strict', '-O3', '-' + mpopt]
+ 
+     def get_flags_arch(self):
+-        return ['']
++        return environ.get('ARCH_FLAGS', '-xSSE4.2 -axCORE-AVX2,COMMON-AVX512').strip().split()
+ 
+ # Is there no difference in the version string between the above compilers
+ # and the Visual compilers?
+@@ -170,10 +185,10 @@ class IntelVisualFCompiler(BaseIntelFCompiler):
+         return []
+ 
+     def get_flags_debug(self):
+-        return ['/4Yb', '/d2']
++        return ["/4Yb", "/d2"]
+ 
+     def get_flags_opt(self):
+-        return ['/O1']  # Scipy test failures with /O2
++        return ["/O3", "/fp:strict", "/Qopenmp"]  # Scipy test failures with /O2
+ 
+     def get_flags_arch(self):
+         return ["/arch:IA32", "/QaxSSE3"]
+@@ -209,7 +224,7 @@ class IntelEM64VisualFCompiler(IntelVisualFCompiler):
+     version_match = simple_version_match(start=r'Intel\(R\).*?64,')
+ 
+     def get_flags_arch(self):
+-        return ['']
++        return environ.get('ARCH_FLAGS', '/QxSSE4.2 /QaxCORE-AVX2,COMMON-AVX512').strip().split()
+ 
+ 
+ if __name__ == '__main__':
+diff --git a/numpy/distutils/intelccompiler.py b/numpy/distutils/intelccompiler.py
+index 3386775..d33f4da 100644
+--- a/numpy/distutils/intelccompiler.py
++++ b/numpy/distutils/intelccompiler.py
+@@ -1,13 +1,13 @@
+ from __future__ import division, absolute_import, print_function
+-
++import re
+ import platform
+ 
+ from distutils.unixccompiler import UnixCCompiler
+-from numpy.distutils.exec_command import find_executable
+-from numpy.distutils.ccompiler import simple_version_match
+ if platform.system() == 'Windows':
+     from numpy.distutils.msvc9compiler import MSVCCompiler
+-
++from numpy.distutils.exec_command import find_executable, exec_command
++from numpy.distutils.ccompiler import simple_version_match
++from os import environ
+ 
+ class IntelCCompiler(UnixCCompiler):
+     """A modified Intel compiler compatible with a GCC-built Python."""
+@@ -21,7 +21,7 @@ class IntelCCompiler(UnixCCompiler):
+         v = self.get_version()
+         mpopt = 'openmp' if v and v < '15' else 'qopenmp'
+         self.cc_exe = ('icc -fPIC -fp-model strict -O3 '
+-                       '-fomit-frame-pointer -{}').format(mpopt)
++                       '-fomit-frame-pointer -{} '.format(mpopt) + environ.get('CFLAGS', '').strip())
+         compiler = self.cc_exe
+ 
+         if platform.system() == 'Darwin':
+@@ -34,7 +34,7 @@ class IntelCCompiler(UnixCCompiler):
+                              archiver='xiar' + ' cru',
+                              linker_exe=compiler + ' -shared-intel',
+                              linker_so=compiler + ' ' + shared_flag +
+-                             ' -shared-intel')
++                             ' -shared-intel ' + environ.get('LDFLAGS', '').strip())
+ 
+ 
+ class IntelItaniumCCompiler(IntelCCompiler):
+@@ -46,6 +46,16 @@ class IntelItaniumCCompiler(IntelCCompiler):
+         if cc_exe:
+             break
+ 
++    def get_version(self):
++        if platform.system() == 'Windows':
++            version_cmd = "icl -dummy"
++            status, output = exec_command(version_cmd, use_tee=0)
++            version = re.search(r'Version\s*([\d.]+)', output).group(1)
++        else:
++            version_cmd = "icc -dumpversion"
++            status, version = exec_command(version_cmd, use_tee=0)
++        return version
++
+ 
+ class IntelEM64TCCompiler(UnixCCompiler):
+     """
+@@ -53,7 +63,7 @@ class IntelEM64TCCompiler(UnixCCompiler):
+     """
+     compiler_type = 'intelem'
+     cc_exe = 'icc -m64'
+-    cc_args = '-fPIC'
++    cc_args = "-fPIC"
+ 
+     def __init__(self, verbose=0, dry_run=0, force=0):
+         UnixCCompiler.__init__(self, verbose, dry_run, force)
+@@ -61,7 +71,9 @@ class IntelEM64TCCompiler(UnixCCompiler):
+         v = self.get_version()
+         mpopt = 'openmp' if v and v < '15' else 'qopenmp'
+         self.cc_exe = ('icc -m64 -fPIC -fp-model strict -O3 '
+-                       '-fomit-frame-pointer -{}').format(mpopt)
++                       '-fomit-frame-pointer -{} {} {}'.format(mpopt,
++                                                               environ.get('ARCH_FLAGS', '-xSSE4.2 -axCORE-AVX2,COMMON-AVX512'),
++                                                               environ.get('CFLAGS', '').strip()))
+         compiler = self.cc_exe
+ 
+         if platform.system() == 'Darwin':
+@@ -74,7 +86,19 @@ class IntelEM64TCCompiler(UnixCCompiler):
+                              archiver='xiar' + ' cru',
+                              linker_exe=compiler + ' -shared-intel',
+                              linker_so=compiler + ' ' + shared_flag +
+-                             ' -shared-intel')
++                             ' -shared-intel ' + environ.get('LDFLAGS', '').strip())
++
++    def get_version(self):
++        if platform.system() == 'Windows':
++            # Intel compiler on Windows does not have way of getting version. Need to parse string using regex to
++            # extract version string. Regex from here: https://stackoverflow.com/a/26480961/5140953
++            version_cmd = "icl -dummy"
++            status, output = exec_command(version_cmd, use_tee=0)
++            version = re.search(r'Version\s*([\d.]+)', output).group(1)
++        else:
++            version_cmd = "icc -dumpversion"
++            status, version = exec_command(version_cmd, use_tee=0)
++        return version
+ 
+ 
+ if platform.system() == 'Windows':
+@@ -92,13 +116,15 @@ if platform.system() == 'Windows':
+ 
+         def initialize(self, plat_name=None):
+             MSVCCompiler.initialize(self, plat_name)
+-            self.cc = self.find_exe('icl.exe')
++            self.cc = self.find_exe("icl.exe")
+             self.lib = self.find_exe('xilib')
+-            self.linker = self.find_exe('xilink')
++            self.linker = self.find_exe("xilink")
+             self.compile_options = ['/nologo', '/O3', '/MD', '/W3',
+-                                    '/Qstd=c99']
++                                    '/Qstd=c99', '/fp:strict'] + environ.get('ARCH_FLAGS', '/QxSSE4.2 /QaxCORE-AVX2,COMMON-AVX512').strip().split()
+             self.compile_options_debug = ['/nologo', '/Od', '/MDd', '/W3',
+                                           '/Qstd=c99', '/Z7', '/D_DEBUG']
++            self.compile_options.extend(environ.get('CFLAGS', '').strip().split())
++            self.compile_options_debug.extend(environ.get('CFLAGS', '').strip().split())
+ 
+     class IntelEM64TCCompilerW(IntelCCompilerW):
+         """
+diff --git a/numpy/distutils/msvc9compiler.py b/numpy/distutils/msvc9compiler.py
+index e9cc334..36686da 100644
+--- a/numpy/distutils/msvc9compiler.py
++++ b/numpy/distutils/msvc9compiler.py
+@@ -5,7 +5,6 @@ from distutils.msvc9compiler import MSVCCompiler as _MSVCCompiler
+ 
+ from .system_info import platform_bits
+ 
+-
+ def _merge(old, new):
+     """Concatenate two environment paths avoiding repeats.
+ 
+@@ -29,7 +28,9 @@ def _merge(old, new):
+         Updated environment string.
+ 
+     """
+-    if not old:
++    if not new or new in old:
++        return old
++    if not old or old in new:
+         return new
+     if new in old:
+         return old
+@@ -63,3 +64,7 @@ class MSVCCompiler(_MSVCCompiler):
+         ld_args.append('/MANIFEST')
+         _MSVCCompiler.manifest_setup_ldargs(self, output_filename,
+                                             build_temp, ld_args)
++
++    # workaround numpy.distutils quotes bug
++    def library_dir_option (self, dir):
++        return '/LIBPATH:"' + dir.replace('"','').rstrip('\\') + '"'
+diff --git a/numpy/distutils/msvccompiler.py b/numpy/distutils/msvccompiler.py
+index 903d751..dfefc2f 100644
+--- a/numpy/distutils/msvccompiler.py
++++ b/numpy/distutils/msvccompiler.py
+@@ -29,9 +29,9 @@ def _merge(old, new):
+         Updated environment string.
+ 
+     """
+-    if new in old:
++    if not new or new in old:
+         return old
+-    if not old:
++    if not old or old in new:
+         return new
+ 
+     # Neither new nor old is empty. Give old priority.
+@@ -58,3 +58,7 @@ class MSVCCompiler(_MSVCCompiler):
+         if platform_bits == 32:
+             self.compile_options += ['/arch:SSE2']
+             self.compile_options_debug += ['/arch:SSE2']
++
++    # workaround numpy.distutils quotes bug
++    def library_dir_option (self, dir):
++        return '/LIBPATH:"' + dir.replace('"','').rstrip('\\') + '"'
+diff --git a/numpy/linalg/lapack_litemodule.c b/numpy/linalg/lapack_litemodule.c
+index f321d6a..b4f589f 100644
+--- a/numpy/linalg/lapack_litemodule.c
++++ b/numpy/linalg/lapack_litemodule.c
+@@ -110,6 +110,7 @@ lapack_lite_dgelsd(PyObject *NPY_UNUSED(self), PyObject *args)
+     PyObject *iwork;
+     int lwork;
+     int info;
++    NPY_BEGIN_THREADS_DEF;
+     TRY(PyArg_ParseTuple(args,"iiiOiOiOdiOiOi:dgelsd",
+                          &m,&n,&nrhs,&a,&lda,&b,&ldb,&s,&rcond,
+                          &rank,&work,&lwork,&iwork,&info));
+@@ -120,10 +121,12 @@ lapack_lite_dgelsd(PyObject *NPY_UNUSED(self), PyObject *args)
+     TRY(check_object(work,NPY_DOUBLE,"work","NPY_DOUBLE","dgelsd"));
+     TRY(check_object(iwork,NPY_INT,"iwork","NPY_INT","dgelsd"));
+ 
++    NPY_BEGIN_THREADS;
+     lapack_lite_status =
+             FNAME(dgelsd)(&m,&n,&nrhs,DDATA(a),&lda,DDATA(b),&ldb,
+                           DDATA(s),&rcond,&rank,DDATA(work),&lwork,
+                           IDATA(iwork),&info);
++    NPY_END_THREADS;
+     if (PyErr_Occurred()) {
+         return NULL;
+     }
+@@ -142,6 +145,7 @@ lapack_lite_dgeqrf(PyObject *NPY_UNUSED(self), PyObject *args)
+         PyObject *a, *tau, *work;
+         int lda;
+         int info;
++        NPY_BEGIN_THREADS_DEF;
+ 
+         TRY(PyArg_ParseTuple(args,"iiOiOOii:dgeqrf",&m,&n,&a,&lda,&tau,&work,&lwork,&info));
+ 
+@@ -150,12 +154,14 @@ lapack_lite_dgeqrf(PyObject *NPY_UNUSED(self), PyObject *args)
+         TRY(check_object(tau,NPY_DOUBLE,"tau","NPY_DOUBLE","dgeqrf"));
+         TRY(check_object(work,NPY_DOUBLE,"work","NPY_DOUBLE","dgeqrf"));
+ 
++        NPY_BEGIN_THREADS;
+         lapack_lite_status =
+                 FNAME(dgeqrf)(&m, &n, DDATA(a), &lda, DDATA(tau),
+                               DDATA(work), &lwork, &info);
+-	if (PyErr_Occurred()) {
++        NPY_END_THREADS;
++        if (PyErr_Occurred()) {
+             return NULL;
+-	}
++        }
+ 
+         return Py_BuildValue("{s:i,s:i,s:i,s:i,s:i,s:i}","dgeqrf_",
+                              lapack_lite_status,"m",m,"n",n,"lda",lda,
+@@ -171,17 +177,20 @@ lapack_lite_dorgqr(PyObject *NPY_UNUSED(self), PyObject *args)
+         PyObject *a, *tau, *work;
+         int lda;
+         int info;
++        NPY_BEGIN_THREADS_DEF;
+ 
+         TRY(PyArg_ParseTuple(args,"iiiOiOOii:dorgqr",  &m, &n, &k, &a, &lda, &tau, &work, &lwork, &info));
+         TRY(check_object(a,NPY_DOUBLE,"a","NPY_DOUBLE","dorgqr"));
+         TRY(check_object(tau,NPY_DOUBLE,"tau","NPY_DOUBLE","dorgqr"));
+         TRY(check_object(work,NPY_DOUBLE,"work","NPY_DOUBLE","dorgqr"));
++        NPY_BEGIN_THREADS;
+         lapack_lite_status =
+             FNAME(dorgqr)(&m, &n, &k, DDATA(a), &lda, DDATA(tau), DDATA(work),
+                           &lwork, &info);
+-	if (PyErr_Occurred()) {
++        NPY_END_THREADS;
++        if (PyErr_Occurred()) {
+             return NULL;
+-	}
++        }
+ 
+         return Py_BuildValue("{s:i,s:i}","dorgqr_",lapack_lite_status,
+                              "info",info);
+@@ -207,6 +216,7 @@ lapack_lite_zgelsd(PyObject *NPY_UNUSED(self), PyObject *args)
+     PyObject *rwork;
+     PyObject *iwork;
+     int info;
++    NPY_BEGIN_THREADS_DEF;
+     TRY(PyArg_ParseTuple(args,"iiiOiOiOdiOiOOi:zgelsd",
+                          &m,&n,&nrhs,&a,&lda,&b,&ldb,&s,&rcond,
+                          &rank,&work,&lwork,&rwork,&iwork,&info));
+@@ -218,9 +228,11 @@ lapack_lite_zgelsd(PyObject *NPY_UNUSED(self), PyObject *args)
+     TRY(check_object(rwork,NPY_DOUBLE,"rwork","NPY_DOUBLE","zgelsd"));
+     TRY(check_object(iwork,NPY_INT,"iwork","NPY_INT","zgelsd"));
+ 
++    NPY_BEGIN_THREADS;
+     lapack_lite_status =
+         FNAME(zgelsd)(&m,&n,&nrhs,ZDATA(a),&lda,ZDATA(b),&ldb,DDATA(s),&rcond,
+                       &rank,ZDATA(work),&lwork,DDATA(rwork),IDATA(iwork),&info);
++    NPY_END_THREADS;
+     if (PyErr_Occurred()) {
+         return NULL;
+     }
+@@ -238,6 +250,7 @@ lapack_lite_zgeqrf(PyObject *NPY_UNUSED(self), PyObject *args)
+         PyObject *a, *tau, *work;
+         int lda;
+         int info;
++        NPY_BEGIN_THREADS_DEF;
+ 
+         TRY(PyArg_ParseTuple(args,"iiOiOOii:zgeqrf",&m,&n,&a,&lda,&tau,&work,&lwork,&info));
+ 
+@@ -246,12 +259,14 @@ lapack_lite_zgeqrf(PyObject *NPY_UNUSED(self), PyObject *args)
+         TRY(check_object(tau,NPY_CDOUBLE,"tau","NPY_CDOUBLE","zgeqrf"));
+         TRY(check_object(work,NPY_CDOUBLE,"work","NPY_CDOUBLE","zgeqrf"));
+ 
++        NPY_BEGIN_THREADS;
+         lapack_lite_status =
+             FNAME(zgeqrf)(&m, &n, ZDATA(a), &lda, ZDATA(tau), ZDATA(work),
+                           &lwork, &info);
+-	if (PyErr_Occurred()) {
++        NPY_END_THREADS;
++        if (PyErr_Occurred()) {
+             return NULL;
+-	}
++        }
+ 
+         return Py_BuildValue("{s:i,s:i,s:i,s:i,s:i,s:i}","zgeqrf_",lapack_lite_status,"m",m,"n",n,"lda",lda,"lwork",lwork,"info",info);
+ }
+@@ -265,6 +280,7 @@ lapack_lite_zungqr(PyObject *NPY_UNUSED(self), PyObject *args)
+         PyObject *a, *tau, *work;
+         int lda;
+         int info;
++        NPY_BEGIN_THREADS_DEF;
+ 
+         TRY(PyArg_ParseTuple(args,"iiiOiOOii:zungqr",  &m, &n, &k, &a, &lda, &tau, &work, &lwork, &info));
+         TRY(check_object(a,NPY_CDOUBLE,"a","NPY_CDOUBLE","zungqr"));
+@@ -272,12 +288,14 @@ lapack_lite_zungqr(PyObject *NPY_UNUSED(self), PyObject *args)
+         TRY(check_object(work,NPY_CDOUBLE,"work","NPY_CDOUBLE","zungqr"));
+ 
+ 
++        NPY_BEGIN_THREADS;
+         lapack_lite_status =
+             FNAME(zungqr)(&m, &n, &k, ZDATA(a), &lda, ZDATA(tau), ZDATA(work),
+                           &lwork, &info);
+-	if (PyErr_Occurred()) {
++        NPY_END_THREADS;
++        if (PyErr_Occurred()) {
+             return NULL;
+-	}
++        }
+ 
+         return Py_BuildValue("{s:i,s:i}","zungqr_",lapack_lite_status,
+                              "info",info);
+diff --git a/numpy/ma/bench.py b/numpy/ma/bench.py
+index b861970..27cc6e7 100644
+--- a/numpy/ma/bench.py
++++ b/numpy/ma/bench.py
+@@ -1,4 +1,5 @@
+ #! /usr/bin/env python
++# -*- coding: utf-8 -*-
+ from __future__ import division, print_function
+ 
+ import timeit
+diff --git a/numpy/testing/tests/test_utils.py b/numpy/testing/tests/test_utils.py
+index e2c1052..b7a2131 100644
+--- a/numpy/testing/tests/test_utils.py
++++ b/numpy/testing/tests/test_utils.py
+@@ -268,7 +268,7 @@ class TestEqual(TestArrayEqual):
+             self._assert_func(np.array([1, 2]), np.matrix([1, 2]))
+         except AssertionError as e:
+             self.assertEqual(
+-                str(e),
++                str(e).replace('1L','1').replace('2L','2'),
+                 "\nArrays are not equal\n\n"
+                 "(shapes (2,), (1, 2) mismatch)\n"
+                 " x: array([1, 2])\n"

@@ -87,7 +87,7 @@ MANIFEST
 
 # Patches #
 ###########
-*.patch
+#*.patch
 *.diff
 
 # OS generated files #
