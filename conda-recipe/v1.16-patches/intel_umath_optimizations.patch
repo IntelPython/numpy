@@ -649,7 +649,7 @@ index da2ab07f8b..45d80ce251 100644
  nc_exp@c@(@ctype@ *x, @ctype@ *r)
  {
 diff --git a/numpy/core/src/umath/loops.c.src b/numpy/core/src/umath/loops.c.src
-index 975a5e6b83..4fec39b815 100644
+index 975a5e6b83..f4a91a21ab 100644
 --- a/numpy/core/src/umath/loops.c.src
 +++ b/numpy/core/src/umath/loops.c.src
 @@ -1,5 +1,6 @@
@@ -977,7 +977,7 @@ index 975a5e6b83..4fec39b815 100644
      }
  }
  
-@@ -1784,114 +1859,1508 @@ pairwise_sum_@TYPE@(char *a, npy_intp n, npy_intp stride)
+@@ -1784,114 +1859,1510 @@ pairwise_sum_@TYPE@(char *a, npy_intp n, npy_intp stride)
  
  /**begin repeat
   * Float types
@@ -1869,7 +1869,7 @@ index 975a5e6b83..4fec39b815 100644
 +		    if( DISJOINT_OR_SAME(op1_shifted, ip1_aligned, j_max, 1) &&
 +			DISJOINT_OR_SAME(op1_shifted, ip2_shifted, j_max, 1) ) {
 +			__assume_aligned(ip1_aligned, 64);
-+			_Pragma("simd")
++			_Pragma("vector")
 +			for(j = 0; j < j_max; j++) {
 +			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
 +			}
@@ -2037,7 +2037,7 @@ index 975a5e6b83..4fec39b815 100644
 +		    if( DISJOINT_OR_SAME(op1_shifted, ip1_aligned, j_max, 1) &&
 +			DISJOINT_OR_SAME(op1_shifted, ip2_shifted, j_max, 1) ) {
 +			__assume_aligned(ip1_aligned, 64);
-+			_Pragma("simd")
++			_Pragma("vector")
 +			for(j = 0; j < j_max; j++) {
 +			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
 +			}
@@ -2205,7 +2205,7 @@ index 975a5e6b83..4fec39b815 100644
 +		    if( DISJOINT_OR_SAME(op1_shifted, ip1_aligned, j_max, 1) &&
 +			DISJOINT_OR_SAME(op1_shifted, ip2_shifted, j_max, 1) ) {
 +			__assume_aligned(ip1_aligned, 64);
-+			_Pragma("simd")
++			_Pragma("vector")
 +			for(j = 0; j < j_max; j++) {
 +			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
 +			}
@@ -2366,13 +2366,15 @@ index 975a5e6b83..4fec39b815 100644
 +
 +            {
 +                npy_intp j, j_max = blocked_end - peel;
++		j_max &= (~0xf);
++		const npy_intp blocked_end = j_max + peel;
 +                if (j_max > 0) {
 +                    @type@ *ip1_aligned = ip1 + peel, *op1_shifted = op1 + peel, *ip2_shifted = ip2 + peel;
 +
 +		    if( DISJOINT_OR_SAME(op1_shifted, ip1_aligned, j_max, 1) &&
 +			DISJOINT_OR_SAME(op1_shifted, ip2_shifted, j_max, 1) ) {
 +			__assume_aligned(ip1_aligned, 64);
-+			_Pragma("simd")
++			_Pragma("vector")
 +			for(j = 0; j < j_max; j++) {
 +			    op1_shifted[j] = ip1_aligned[j] @OP@ ip2_shifted[j];
 +			}
@@ -2555,7 +2557,7 @@ index 975a5e6b83..4fec39b815 100644
      }
  }
  
-@@ -1998,9 +3467,15 @@ NPY_NO_EXPORT void
+@@ -1998,9 +3469,15 @@ NPY_NO_EXPORT void
  NPY_NO_EXPORT void
  @TYPE@_square(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(data))
  {
@@ -2574,7 +2576,7 @@ index 975a5e6b83..4fec39b815 100644
          UNARY_LOOP {
              const @type@ in1 = *(@type@ *)ip1;
              *((@type@ *)op1) = in1*in1;
-@@ -2011,10 +3486,15 @@ NPY_NO_EXPORT void
+@@ -2011,10 +3488,15 @@ NPY_NO_EXPORT void
  NPY_NO_EXPORT void
  @TYPE@_reciprocal(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(data))
  {
@@ -2594,7 +2596,7 @@ index 975a5e6b83..4fec39b815 100644
          UNARY_LOOP {
              const @type@ in1 = *(@type@ *)ip1;
              *((@type@ *)op1) = 1/in1;
-@@ -2042,7 +3522,15 @@ NPY_NO_EXPORT void
+@@ -2042,7 +3524,15 @@ NPY_NO_EXPORT void
  NPY_NO_EXPORT void
  @TYPE@_absolute(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
  {
@@ -2611,7 +2613,7 @@ index 975a5e6b83..4fec39b815 100644
          UNARY_LOOP {
              const @type@ in1 = *(@type@ *)ip1;
              const @type@ tmp = in1 > 0 ? in1 : -in1;
-@@ -2495,9 +3983,18 @@ HALF_ldexp_long(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UN
+@@ -2495,9 +3985,18 @@ HALF_ldexp_long(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UN
   * #ftype = npy_float, npy_double, npy_longdouble#
   * #c = f, , l#
   * #C = F, , L#
@@ -2630,7 +2632,7 @@ index 975a5e6b83..4fec39b815 100644
  static void
  pairwise_sum_@TYPE@(@ftype@ *rr, @ftype@ * ri, char * a, npy_intp n,
                      npy_intp stride)
-@@ -2534,14 +4031,14 @@ pairwise_sum_@TYPE@(@ftype@ *rr, @ftype@ * ri, char * a, npy_intp n,
+@@ -2534,14 +4033,14 @@ pairwise_sum_@TYPE@(@ftype@ *rr, @ftype@ * ri, char * a, npy_intp n,
  
          for (i = 8; i < n - (n % 8); i += 8) {
              /* small blocksizes seems to mess with hardware prefetch */
@@ -2650,7 +2652,7 @@ index 975a5e6b83..4fec39b815 100644
              r[7] += *((@ftype@ *)(a + (i + 6) * stride + sizeof(@ftype@)));
          }
  
-@@ -2798,10 +4295,30 @@ NPY_NO_EXPORT void
+@@ -2798,10 +4297,30 @@ NPY_NO_EXPORT void
  NPY_NO_EXPORT void
  @TYPE@_absolute(char **args, npy_intp *dimensions, npy_intp *steps, void *NPY_UNUSED(func))
  {
@@ -2685,7 +2687,7 @@ index 975a5e6b83..4fec39b815 100644
      }
  }
  
-@@ -2827,6 +4344,7 @@ NPY_NO_EXPORT void
+@@ -2827,6 +4346,7 @@ NPY_NO_EXPORT void
                              (CEQ(in1r, in1i, 0.0, 0.0) ?  0 : NPY_NAN@C@));
          ((@ftype@ *)op1)[1] = 0;
      }
