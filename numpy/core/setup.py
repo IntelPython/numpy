@@ -945,11 +945,11 @@ def configuration(parent_package='',top_path=None):
             ]
 
     if platform.system() == "Windows":
-        eca = ['/fp:fast=2', '/Qimf-precision=high', '/Qprec-sqrt', '/Qstd=c99']
+        eca = ['/fp:fast=2', '/Qimf-precision=high', '/Qprec-sqrt', '/Qstd=c99', '/Qprotect-parens']
         if sys.version_info < (3, 0):
             eca.append('/Qprec-div')
     else:
-        eca = ['-fp-model', 'fast=2', '-fimf-precision=high', '-prec-sqrt']
+        eca = ['-fp-model', 'fast=2', '-fimf-precision=high', '-prec-sqrt', '-fprotect-parens']
     config.add_library('loops',
                        sources=loops_src,
                        include_dirs=[],
