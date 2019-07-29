@@ -1720,7 +1720,7 @@ NPY_NO_EXPORT void
             DISJOINT_OR_SAME(args[0], args[1], dimensions[0], sizeof(@type@))
             ,
             const @type@ in1 = *(@type@ *)ip1;
-            if(1 == 1) {//if(in1 == -NPY_INFINITY@A@){
+            if(in1 == -NPY_INFINITY@A@){
                 ignore_fpstatus = 1;
             }
             *(@type@ *)op1 = @scalarf@(in1);
