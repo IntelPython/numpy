@@ -45,7 +45,7 @@ def configuration(parent_package='', top_path=None):
 
     if is_msvc and platform_bits == 32:
         # 32-bit windows requires explicit sse2 option
-        EXTRA_COMPILE_ARGS += ['/arch:SSE2']
+        EXTRA_COMPILE_ARGS += [] # ['/arch:SSE2']
     elif not is_msvc:
         # Some bit generators require c99
         EXTRA_COMPILE_ARGS += ['-std=c99']
@@ -53,7 +53,7 @@ def configuration(parent_package='', top_path=None):
                           for val in ('x86', 'i686', 'i386', 'amd64')])
         if INTEL_LIKE:
             # Assumes GCC or GCC-like compiler
-            EXTRA_COMPILE_ARGS += ['-msse2']
+            EXTRA_COMPILE_ARGS += [] # ['-msse2']
 
     # Use legacy integer variable sizes
     LEGACY_DEFS = [('NP_RANDOM_LEGACY', '1')]
