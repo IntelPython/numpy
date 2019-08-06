@@ -33,7 +33,8 @@ if [ ! -f site.cfg ]; then
     exit 1
 fi
 
-CFLAGS="-DNDEBUG -I$PREFIX/include $CFLAGS" $PYTHON setup.py config_cc --compiler=intelem config_fc --fcompiler=intelem build --force install --old-and-unmanageable
+export CFLAGS="-std=c99 -DNDEBUG -I$PREFIX/include ${CFLAGS}"
+$PYTHON setup.py config_cc --compiler=intelem config_fc --fcompiler=intelem build --force install --old-and-unmanageable
 if [ `uname` == Linux ]; then
     intel-libpatch.sh
 fi
