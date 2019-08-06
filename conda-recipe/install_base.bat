@@ -21,10 +21,10 @@ if errorlevel 1 exit 1
 %PYTHON% %RECIPE_DIR%\cio_files\replace.py @PREFIX@ "%PREFIX%" site.cfg
 if errorlevel 1 exit 1
 
-set CFLAGS=-DNDEBUG -I%PREFIX%\Library\include %CFLAGS%
+set CFLAGS=/Qstd=c99 -DNDEBUG -I%PREFIX%\Library\include %CFLAGS%
 %PYTHON% setup.py config_cc --compiler=intelemw build --force install --old-and-unmanageable
 if errorlevel 1 exit 1
-%PYTHON% setup.py bdist_wheel
+rem %PYTHON% setup.py bdist_wheel
 if errorlevel 1 exit 1
-copy dist\numpy-1*.whl ..\..\
+rem copy dist\numpy-1*.whl ..\..\
 if errorlevel 1 exit 1
