@@ -323,19 +323,21 @@ index fb418aadcf..19605a0696 100644
      --------
      >>> np.cbrt([1,8,27])
 diff --git a/numpy/core/include/numpy/npy_math.h b/numpy/core/include/numpy/npy_math.h
-index 59ebaa4382..3382541e5b 100644
+index 59ebaa4382..8bb45fa9a9 100644
 --- a/numpy/core/include/numpy/npy_math.h
 +++ b/numpy/core/include/numpy/npy_math.h
-@@ -9,6 +9,9 @@ extern "C" {
- #ifdef __SUNPRO_CC
- #include <sunmath.h>
+@@ -22,7 +22,10 @@ extern "C" {
+ #define NPY_INPLACE
  #endif
+ 
+-
 +#ifdef __INTEL_COMPILER
-+#include <mathimf.h>
++extern double invsqrt(double);
++extern float invsqrtf(float);
 +#endif
- #ifdef HAVE_NPY_CONFIG_H
- #include <npy_config.h>
- #endif
+ /*
+  * NAN and INFINITY like macros (same behavior as glibc for NAN, same as C99
+  * for INFINITY)
 @@ -178,8 +181,10 @@ NPY_INPLACE double npy_atan(double x);
  
  NPY_INPLACE double npy_log(double x);
