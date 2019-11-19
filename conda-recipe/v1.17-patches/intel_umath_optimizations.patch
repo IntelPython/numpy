@@ -331,10 +331,10 @@ index 59ebaa4382..8bb45fa9a9 100644
  #endif
  
 -
-+#ifdef __INTEL_COMPILER
-+extern double invsqrt(double);
-+extern float invsqrtf(float);
-+#endif
++
++
++
++
  /*
   * NAN and INFINITY like macros (same behavior as glibc for NAN, same as C99
   * for INFINITY)
@@ -601,7 +601,7 @@ index a63997994e..da0d4af174 100644
   */
  #ifdef HAVE_@KIND@@C@
 diff --git a/numpy/core/src/npymath/npy_math_internal.h.src b/numpy/core/src/npymath/npy_math_internal.h.src
-index fa820baac3..1233ed8c36 100644
+index fa820baac3..2bdc9c249f 100644
 --- a/numpy/core/src/npymath/npy_math_internal.h.src
 +++ b/numpy/core/src/npymath/npy_math_internal.h.src
 @@ -380,9 +380,9 @@ NPY_INPLACE double npy_log2(double x)
@@ -628,7 +628,7 @@ index fa820baac3..1233ed8c36 100644
   */
  #ifdef HAVE_@KIND@@C@
  NPY_INPLACE @type@ npy_@kind@@c@(@type@ x)
-@@ -472,6 +472,24 @@ NPY_INPLACE @type@ npy_@kind@@c@(@type@ x)
+@@ -472,6 +472,19 @@ NPY_INPLACE @type@ npy_@kind@@c@(@type@ x)
  
  /**end repeat1**/
  
@@ -636,17 +636,12 @@ index fa820baac3..1233ed8c36 100644
 + * #kind = invsqrt#
 + * #KIND = INVSQRT#
 + */
-+#ifdef HAVE_@KIND@@C@
 +NPY_INPLACE @type@ npy_@kind@@c@(@type@ x)
 +{
-+    return @kind@@c@(x);
++    /* Intel(R) C Compiler recognizes 1/sqrt(x) and 
++     * inlines it as invsqrt */
++    return ((@type@) 1)/sqrt@c@(x);
 +}
-+#else
-+NPY_INPLACE @type@ npy_@kind@@c@(@type@ x)
-+{
-+    return 1/sqrt@c@(x);
-+}
-+#endif
 +
 +/**end repeat1**/
 +
