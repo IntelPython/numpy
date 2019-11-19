@@ -22,10 +22,6 @@ extern "C" {
 #define NPY_INPLACE
 #endif
 
-#ifdef __INTEL_COMPILER
-extern double invsqrt(double);
-extern float invsqrtf(float);
-#endif
 /*
  * NAN and INFINITY like macros (same behavior as glibc for NAN, same as C99
  * for INFINITY)
