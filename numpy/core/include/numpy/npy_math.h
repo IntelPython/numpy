@@ -9,9 +9,6 @@ extern "C" {
 #ifdef __SUNPRO_CC
 #include <sunmath.h>
 #endif
-#ifdef __INTEL_COMPILER
-#include <mathimf.h>
-#endif
 #ifdef HAVE_NPY_CONFIG_H
 #include <npy_config.h>
 #endif
@@ -24,7 +21,6 @@ extern "C" {
 #else
 #define NPY_INPLACE
 #endif
-
 
 /*
  * NAN and INFINITY like macros (same behavior as glibc for NAN, same as C99

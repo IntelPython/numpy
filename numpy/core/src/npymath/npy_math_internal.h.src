@@ -476,17 +476,12 @@ NPY_INPLACE @type@ npy_@kind@@c@(@type@ x)
  * #kind = invsqrt#
  * #KIND = INVSQRT#
  */
-#ifdef HAVE_@KIND@@C@
 NPY_INPLACE @type@ npy_@kind@@c@(@type@ x)
 {
-    return @kind@@c@(x);
+    /* Intel(R) C Compiler recognizes 1/sqrt(x) and 
+     * inlines it as invsqrt */
+    return ((@type@) 1)/sqrt@c@(x);
 }
-#else
-NPY_INPLACE @type@ npy_@kind@@c@(@type@ x)
-{
-    return 1/sqrt@c@(x);
-}
-#endif
 
 /**end repeat1**/
 
