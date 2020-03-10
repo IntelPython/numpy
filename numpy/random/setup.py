@@ -117,6 +117,9 @@ def configuration(parent_package='', top_path=None):
                              depends=['%s.pyx' % gen],
                              define_macros=defs,
                              )
+
+    if ('icl' in compiler_name or 'icc' in compiler_name):
+        EXTRA_COMPILE_ARGS += ['-inline-forceinline']
     config.add_extension('mtrand',
                          # mtrand does not depend on random_hypergeometric.c.
                          sources=['mtrand.c',
